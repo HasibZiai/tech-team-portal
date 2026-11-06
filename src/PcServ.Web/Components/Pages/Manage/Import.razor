@@ -1,0 +1,282 @@
+@page "/manage/import"
+@attribute [Authorize(Policy = Policies.IsAdmin)]
+@using PcServ.Web.Services.Maps
+@implements IDisposable
+@inject MapImportService Importer
+@inject DemoDataService DemoData
+@inject TestVersion Test
+@inject NetworkLayerImportService NetworkLayers
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Import maps · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Import maps" Subtitle="Bring in many site maps at once from an import list." />
+
+@if (_testVersion)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">Importing is turned off in the test version, so real maps can't end up in the test data. Go back to real data first.</MudAlert>
+}
+else
+{
+
+<MudGrid Spacing="3" Class="mb-2">
+    @if (_demo is { Sites: > 0 })
+    {
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-5 h-100">
+                <MudText Typo="Typo.h6" HtmlTag="h2">Remove demo data first</MudText>
+                <MudText Typo="Typo.body2" Class="mt-2">
+                    Removes the @_demo.Sites fictional demo site(s), @_demo.Maps map(s) on them, and any links that still match the demo links.
+                    Users, the audit log, and links you added or changed are kept.
+                </MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Class="mt-3" StartIcon="@Icons.Material.Outlined.Delete"
+                           Disabled="_importing" OnClick="RemoveDemoData">Remove demo data</MudButton>
+            </MudPaper>
+        </MudItem>
+    }
+
+    <MudItem xs="12" md="@(_demo is { Sites: > 0 } ? 6 : 12)">
+        <MudPaper Outlined="true" Class="pa-5 h-100">
+            <MudText Typo="Typo.h6" HtmlTag="h2">Import maps</MudText>
+            @if (!Importer.ListExists)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-2">
+                    No import list found. Put one here: <code>@Importer.ListPath</code>
+                </MudAlert>
+            }
+            else if (_rows is not null)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2">
+                    <strong>@Count(MapImportStatus.Ready)</strong> ready ·
+                    <strong>@Count(MapImportStatus.AlreadyImported)</strong> already imported ·
+                    <strong>@Count(MapImportStatus.Problem)</strong> with problems
+                </MudText>
+                <MudText Typo="Typo.caption" Class="d-block mt-1">Stay on this page while it runs. If it stops, run it again and it picks up where it left off.</MudText>
+                @if (DemoStillPresent)
+                {
+                    @* A real site can share a demo site's name, so importing first would attach real maps to a demo site. *@
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-3">Remove the demo data first.</MudAlert>
+                }
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" StartIcon="@Icons.Material.Filled.UploadFile"
+                           Disabled="@(_importing || DemoStillPresent || Count(MapImportStatus.Ready) == 0)" OnClick="RunImport">
+                    @(_importing ? "Importing..." : $"Import {Count(MapImportStatus.Ready)} map(s)")
+                </MudButton>
+
+                @if (_importing)
+                {
+                    <MudProgressLinear Color="Color.Primary" Value="@Percent" Class="mt-4" aria-label="Import progress" />
+                    <MudText Typo="Typo.body2" Class="mt-1" role="status">@_done of @_total: @_current</MudText>
+                }
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@if (_network is { Count: > 0 })
+{
+    <MudPaper Outlined="true" Class="pa-5 mb-4">
+        <MudText Typo="Typo.h6" HtmlTag="h2">3. Add network layers</MudText>
+        <MudText Typo="Typo.body2" Class="mt-2">
+            Turns access points and closets read from the Wi-Fi maps into layers you can switch on and off, and removes those markings from the map image.
+            Anything uncertain is marked for a person to check.
+        </MudText>
+        <MudText Typo="Typo.body2" Class="mt-2">
+            <strong>@NetworkCount(NetworkLayerStatus.Ready)</strong> ready ·
+            <strong>@NetworkCount(NetworkLayerStatus.AlreadyAdded)</strong> already added ·
+            <strong>@NetworkCount(NetworkLayerStatus.NoMatchingMap)</strong> with no matching map
+        </MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" StartIcon="@Icons.Material.Outlined.Layers"
+                   Disabled="@(_importing || NetworkCount(NetworkLayerStatus.Ready) == 0)" OnClick="RunNetworkImport">
+            @(_importing ? "Working..." : $"Add layers to {NetworkCount(NetworkLayerStatus.Ready)} map(s)")
+        </MudButton>
+        @if (_networkResult is not null)
+        {
+            <MudAlert Severity="@(_networkResult.Failures.Count == 0 ? Severity.Success : Severity.Warning)" Variant="Variant.Outlined" Class="mt-3">
+                Added layers to @_networkResult.Maps map(s): @_networkResult.Items item(s), @_networkResult.ToCheck to check.
+                @foreach (var failure in _networkResult.Failures)
+                {
+                    <div>@failure</div>
+                }
+            </MudAlert>
+        }
+    </MudPaper>
+}
+
+@if (_result is not null)
+{
+    <MudAlert Severity="@(_result.Failures.Count == 0 ? Severity.Success : Severity.Warning)" Variant="Variant.Outlined" Class="mb-4">
+        Imported @_result.Imported map(s), created @_result.SitesCreated site(s) and brought in @_result.LabelsImported room label(s).
+        @if (_result.Failures.Count > 0)
+        {
+            <span>@_result.Failures.Count file(s) failed:</span>
+            <ul class="mt-1">
+                @foreach (var failure in _result.Failures)
+                {
+                    <li>@failure.Row.File: @failure.Message</li>
+                }
+            </ul>
+        }
+    </MudAlert>
+}
+
+@if (_rows is { Count: > 0 })
+{
+    <MudTable Items="Visible" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm" RowsPerPage="25">
+        <ToolBarContent>
+            <MudText Typo="Typo.h6" HtmlTag="h2">Import list</MudText>
+            <MudSpacer />
+            <MudSwitch T="bool" @bind-Value="_problemsOnly" Color="Color.Primary" Label="Show problems only" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>Site</MudTh>
+            <MudTh>Map</MudTh>
+            <MudTh>Who can open it</MudTh>
+            <MudTh>File</MudTh>
+            <MudTh>Status</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Site">@context.Row.Site</MudTd>
+            <MudTd DataLabel="Map">@context.Row.MapName</MudTd>
+            <MudTd DataLabel="Who can open it">@context.Row.Visibility and above</MudTd>
+            <MudTd DataLabel="File" Class="audit-summary">@context.Row.File</MudTd>
+            <MudTd DataLabel="Status">
+                @switch (context.Status)
+                {
+                    case MapImportStatus.Ready:
+                        <span>Ready</span>
+                        break;
+                    case MapImportStatus.AlreadyImported:
+                        <span>Already imported</span>
+                        break;
+                    default:
+                        <strong class="mud-error-text">Problem: @context.Message</strong>
+                        break;
+                }
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="[25, 50, 100]" />
+        </PagerContent>
+    </MudTable>
+}
+}
+
+@code {
+    private bool _testVersion;
+
+    private List<MapImportPreviewRow>? _rows;
+    private DemoDataSummary? _demo;
+    private List<NetworkLayerPreview>? _network;
+    private NetworkLayerResult? _networkResult;
+    private MapImportResult? _result;
+    private bool _importing;
+    private bool _problemsOnly;
+    private int _done;
+    private int _total;
+    private string _current = "";
+    private readonly CancellationTokenSource _cancel = new();
+
+    private IEnumerable<MapImportPreviewRow> Visible =>
+        _problemsOnly ? _rows!.Where(r => r.Status == MapImportStatus.Problem) : _rows!;
+
+    private double Percent => _total == 0 ? 0 : 100.0 * _done / _total;
+
+    private bool DemoStillPresent => _demo is { Sites: > 0 };
+
+    private int Count(MapImportStatus status) => _rows?.Count(r => r.Status == status) ?? 0;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _testVersion = await Test.IsOnAsync((await AuthState).User);
+        if (!_testVersion) await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _rows = await Importer.PreviewAsync();
+        _demo = await DemoData.SummarizeAsync();
+        _network = await NetworkLayers.PreviewAsync();
+    }
+
+    private int NetworkCount(NetworkLayerStatus status) => _network?.Count(n => n.Status == status) ?? 0;
+
+    private async Task RunNetworkImport()
+    {
+        _importing = true;
+        _networkResult = null;
+        _done = 0;
+        _total = NetworkCount(NetworkLayerStatus.Ready);
+        var progress = new Progress<(int Done, int Total, string Current)>(p =>
+        {
+            _done = p.Done;
+            _total = p.Total;
+            _current = p.Current;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            _networkResult = await NetworkLayers.ImportAsync(progress, _cancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The admin left the page. Running it again carries on with the maps not yet done.
+        }
+        finally
+        {
+            _importing = false;
+        }
+
+        if (!_cancel.IsCancellationRequested) await LoadAsync();
+    }
+
+    private async Task RemoveDemoData()
+    {
+        var message = $"Remove {_demo!.Sites} demo site(s) and {_demo.Maps} map(s) on them, plus matching demo links? This can't be undone.";
+        if (!await Dialogs.ConfirmAsync("Remove demo data", message, "Remove demo data", danger: true)) return;
+
+        var (sites, links) = await DemoData.RemoveAsync();
+        Snackbar.Add($"Removed {sites} demo site(s) and {links} demo link(s).", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task RunImport()
+    {
+        _importing = true;
+        _result = null;
+        _done = 0;
+        _total = Count(MapImportStatus.Ready);
+
+        var progress = new Progress<(int Done, int Total, string Current)>(p =>
+        {
+            _done = p.Done;
+            _total = p.Total;
+            _current = p.Current;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            _result = await Importer.ImportAsync(progress, _cancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The admin left the page. Running the import again resumes where this stopped.
+        }
+        finally
+        {
+            _importing = false;
+        }
+
+        if (!_cancel.IsCancellationRequested) await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cancel.Cancel();
+        _cancel.Dispose();
+    }
+}

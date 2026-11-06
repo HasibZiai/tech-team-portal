@@ -1,0 +1,68 @@
+@inject WikiService Wiki
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <ul class="wiki-section-edit" aria-label="Sections">
+                @foreach (var section in _sections)
+                {
+                    <li>
+                        <MudTextField T="string" Value="@section.Name" ValueChanged="name => Rename(section, name)" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="80" />
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Move {section.Name} up")" OnClick="() => Move(section, -1)">Up</MudButton>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Move {section.Name} down")" OnClick="() => Move(section, 1)">Down</MudButton>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Error" aria-label="@($"Delete {section.Name}")" OnClick="() => Delete(section)">Delete</MudButton>
+                    </li>
+                }
+            </ul>
+            <div class="d-flex gap-2 align-start">
+                <MudTextField @bind-Value="_new" Label="New section" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="80" Immediate="true" />
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-1" aria-label="Add this section" OnClick="Add">Add</MudButton>
+            </div>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Close(DialogResult.Ok(true))">Done</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<WikiSectionView> _sections = [];
+    private string? _new, _error;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload() => _sections = await Wiki.TreeAsync((await AuthState).User);
+
+    private async Task Act(Func<System.Security.Claims.ClaimsPrincipal, Task> action)
+    {
+        _error = null;
+        try
+        {
+            await action((await AuthState).User);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        await Reload();
+    }
+
+    private async Task Add()
+    {
+        await Act(user => Wiki.SaveSectionAsync(0, _new, user));
+        if (_error is null) _new = null;
+    }
+
+    private Task Rename(WikiSectionView section, string? name) => Act(user => Wiki.SaveSectionAsync(section.Id, name, user));
+
+    private Task Move(WikiSectionView section, int direction) => Act(user => Wiki.MoveSectionAsync(section.Id, direction, user));
+
+    private Task Delete(WikiSectionView section) => Act(user => Wiki.DeleteSectionAsync(section.Id, user));
+}

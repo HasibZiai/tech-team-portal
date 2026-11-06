@@ -1,0 +1,56 @@
+# Tech Team Portal: production stack for the Linux VM.
+#
+#   cd deploy
+#   cp .env.example .env      # then edit .env
+#   docker compose up -d --build
+#
+# Only Caddy is reachable from the network; the app itself listens inside the Docker network.
+
+name: pcserv
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ghcr.io/hasibziai/tech-team-portal:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      TZ: ${TZ:-UTC}
+      PcServ__District__InventoryName: ${PCSERV_INVENTORY_NAME:-}
+      PcServ__District__InventoryUrl: ${PCSERV_INVENTORY_URL:-}
+      PcServ__District__DeviceConsoleName: ${PCSERV_DEVICE_CONSOLE_NAME:-}
+      PcServ__District__DeviceConsoleUrl: ${PCSERV_DEVICE_CONSOLE_URL:-}
+      PcServ__District__AssetTagDigits: ${PCSERV_ASSET_TAG_DIGITS:-}
+    volumes:
+      - pcserv-data:/app/data
+      # Optional: maps to bulk import, with map-import.csv inside. See docs/admin-guide.md.
+      - ./import:/app/data/import:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      PCSERV_HOSTNAME: ${PCSERV_HOSTNAME:?Set PCSERV_HOSTNAME in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pcserv-data:     # database, sign-in keys, uploads: BACK THIS UP
+  caddy-data:      # HTTPS certificates
+  caddy-config:

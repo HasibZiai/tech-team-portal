@@ -1,0 +1,70 @@
+@inject SiteStaffService StaffList
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudSelect T="OrderStatus" @bind-Value="_status" Label="Stage" Variant="Variant.Outlined" ToStringFunc="@(stage => OrderStages.Name(stage, Contact))">
+                @foreach (var stage in Enum.GetValues<OrderStatus>().Where(s => s != Current))
+                {
+                    <MudSelectItem T="OrderStatus" Value="stage">@OrderStages.Name(stage, Contact)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudText Typo="Typo.body2">@OrderStages.Description(_status)</MudText>
+            @if (_status == OrderStatus.SentToContact)
+            {
+                <StaffNameField @bind-Value="_contact" Label="Sent to" Staff="_staff" HelperText="Pick from the site's staff list, or type a name." />
+            }
+            <MudDatePicker @bind-Date="_date" Label="Date" Variant="Variant.Outlined" MaxDate="DateTime.Today" DateFormat="MMM d, yyyy" Editable="true"
+                           HelperText="Change this if it happened on an earlier day." />
+            <MudTextField @bind-Value="_note" Label="Note (optional)" Variant="Variant.Outlined" Lines="2" MaxLength="500" Immediate="true" />
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Update stage</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public OrderStatus Current { get; set; }
+    [Parameter] public OrderStatus Suggested { get; set; }
+    [Parameter] public int SiteId { get; set; }
+
+    /// <summary>The order's current contact, if it has one.</summary>
+    [Parameter] public string? Contact { get; set; }
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<OrderStatus, DateOnly, string?, string?, Task<string?>>? OnSave { get; set; }
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private OrderStatus _status;
+    private DateTime? _date = DateTime.Today;
+    private string? _note, _error, _contact;
+    private List<SiteStaffMember> _staff = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = Suggested;
+        _contact = Contact;
+        _staff = await StaffList.ListAsync(SiteId, (await AuthState).User);
+        _contact ??= _staff.FirstOrDefault(s => s.IsOrderContact)?.Name;
+    }
+
+    private async Task Save()
+    {
+        if (_date is not { } date)
+        {
+            _error = "Choose a date.";
+            return;
+        }
+        _error = OnSave is null ? null : await OnSave(_status, DateOnly.FromDateTime(date), _note, _contact);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

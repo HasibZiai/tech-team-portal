@@ -1,0 +1,99 @@
+@using PcServ.Web.Services.Maps
+@inject WikiService Wiki
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <div>
+                <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="Upload" Accept=".jpg,.jpeg,.png,.webp" MaximumFileCount="10">
+                    <CustomContent>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Upload" Disabled="_uploading" OnClick="@context.OpenFilePickerAsync">
+                            @(_uploading ? "Uploading..." : "Upload images")
+                        </MudButton>
+                    </CustomContent>
+                    <SelectedTemplate></SelectedTemplate>
+                </MudFileUpload>
+                <MudText Typo="Typo.caption" Class="d-block mt-1">JPEG, PNG or WebP, up to 25 MB. You can also paste or drag images straight into the page.</MudText>
+            </div>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+            @if (_images.Count == 0)
+            {
+                <MudText>The image library is empty.</MudText>
+            }
+            <ul class="photo-grid" style="list-style:none; margin:0; padding:0;" aria-label="Image library">
+                @foreach (var image in _images)
+                {
+                    <li class="photo-card @(_selected?.Key == image.Key ? "wiki-image-selected" : "")">
+                        <button type="button" class="wiki-image-choice" aria-pressed="@(_selected?.Key == image.Key ? "true" : "false")" aria-label="@($"Choose {image.FileName}")" @onclick="() => Choose(image)">
+                            <img src="@($"{image.Url}?thumb=true")" alt="" loading="lazy" />
+                        </button>
+                        <div class="photo-card-footer"><span class="photo-caption">@image.FileName</span></div>
+                    </li>
+                }
+            </ul>
+            @if (_selected is not null)
+            {
+                <MudTextField @bind-Value="_alt" Label="Describe the image" Variant="Variant.Outlined" MaxLength="200" Immediate="true"
+                              HelperText="For people who can't see it, and if it doesn't load." />
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_selected is null" OnClick="Insert">Add to page</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<WikiImageView> _images = [];
+    private WikiImageView? _selected;
+    private string? _alt, _error;
+    private bool _uploading;
+
+    protected override async Task OnInitializedAsync() => _images = await Wiki.ListImagesAsync((await AuthState).User);
+
+    private void Choose(WikiImageView image)
+    {
+        _selected = image;
+        _alt = Path.GetFileNameWithoutExtension(image.FileName);
+    }
+
+    private void Insert() => MudDialog.Close(DialogResult.Ok((_selected!.Url, _alt ?? "")));
+
+    private async Task Upload(IReadOnlyList<IBrowserFile>? files)
+    {
+        if (files is null || files.Count == 0) return;
+        _uploading = true;
+        _error = null;
+        var user = (await AuthState).User;
+        var problems = new List<string>();
+        foreach (var file in files)
+        {
+            try
+            {
+                await using var stream = file.OpenReadStream(MapPhotoService.MaxUploadBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                var added = await Wiki.UploadImageAsync(file.Name, memory.ToArray(), user);
+                Choose(added);
+            }
+            catch (MapFileException ex)
+            {
+                problems.Add($"{file.Name}: {ex.Message}");
+            }
+            catch (IOException)
+            {
+                problems.Add($"{file.Name}: couldn't be read. The limit is 25 MB.");
+            }
+        }
+        if (problems.Count > 0) _error = string.Join(" ", problems);
+        _images = await Wiki.ListImagesAsync(user);
+        _uploading = false;
+    }
+}

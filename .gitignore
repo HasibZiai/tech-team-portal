@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Local app data: database, sign-in keys, uploads. Never commit these.
+App_Data/
+*.db
+*.db-shm
+*.db-wal
+
+# Real district maps: sensitive, and not part of the source code. Never commit these.
+docs/Blank_Maps/
+docs/Network_Maps/
+docs/map-import.csv
+docs/Network_Layers/
+docs/Private_Tools/
+deploy/import/
+
+# Deployment secrets
+deploy/.env
+*.crt
+*.key
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+.DS_Store
+
+# Test results
+TestResults/
+
+# Settings unique to one district
+src/PcServ.Web/district.json
+
+# The wiki editor's build tools. Only its built file is committed.
+node_modules/

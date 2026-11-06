@@ -1,0 +1,35 @@
+@using PcServ.Web.Components.Pages.Orders
+@inject NavigationManager Nav
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <div><OrderStageChip Status="Order.Status" Contact="@Order.Contact" /> <span class="ml-1">since @Order.StatusDate.ToString("MMM d, yyyy")</span></div>
+            <dl class="order-details">
+                <dt>For</dt><dd>@(Order.RequestedFor ?? "Not given")</dd>
+                <dt>Room</dt><dd>@(Order.Room ?? "Not given")</dd>
+                <dt>Quantity</dt><dd>@Order.Quantity</dd>
+                <dt>Vendor</dt><dd>@Order.VendorName</dd>
+                <dt>Contact</dt><dd>@(Order.Contact ?? "Not given")</dd>
+            </dl>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Error" OnClick="() => MudDialog.Close(DialogResult.Ok(true))">Remove pin</MudButton>
+        <MudSpacer />
+        <MudButton OnClick="() => MudDialog.Cancel()">Close</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="OpenOrder">Open order</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public OrderView Order { get; set; } = default!;
+
+    private void OpenOrder()
+    {
+        MudDialog.Cancel();
+        Nav.NavigateTo($"orders/{Order.Id}");
+    }
+}

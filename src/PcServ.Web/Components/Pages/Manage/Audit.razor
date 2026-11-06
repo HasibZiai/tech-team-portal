@@ -1,0 +1,73 @@
+@page "/manage/audit"
+@inject AppDbFactory DbFactory
+
+<PageTitle>Audit log · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Audit log" Subtitle="Every change made in the portal, newest first." />
+
+<MudTable T="AuditEntry" ServerData="LoadPage" @ref="_table" Dense="true" Hover="true" Outlined="true" Elevation="0" RowsPerPage="25">
+    <ToolBarContent>
+        <MudTextField T="string" ValueChanged="OnSearch" Placeholder="Search by user, type or description" Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+                      DebounceInterval="300" Class="search-box" />
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh>When</MudTh>
+        <MudTh>Who</MudTh>
+        <MudTh>Action</MudTh>
+        <MudTh>Type</MudTh>
+        <MudTh>Details</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="When" Class="text-nowrap"><LocalTime Value="context.Timestamp" Format="MMM d, yyyy h:mm tt" /></MudTd>
+        <MudTd DataLabel="Who">@context.UserName</MudTd>
+        <MudTd DataLabel="Action"><MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@ActionColor(context.Action)">@context.Action</MudChip></MudTd>
+        <MudTd DataLabel="Type">@context.EntityType</MudTd>
+        <MudTd DataLabel="Details" Class="audit-summary">@context.Summary</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Color="Color.Secondary">No audit entries found.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="[25, 50, 100]" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<AuditEntry>? _table;
+    private string? _search;
+
+    private async Task<TableData<AuditEntry>> LoadPage(TableState state, CancellationToken ct)
+    {
+        await using var db = await DbFactory.CreateAsync();
+        var query = db.AuditEntries.AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(_search))
+        {
+            var term = _search.Trim();
+            query = query.Where(a => a.UserName.Contains(term) || a.EntityType.Contains(term)
+                                     || a.Action.Contains(term) || a.Summary.Contains(term));
+        }
+
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderByDescending(a => a.Id)
+            .Skip(state.Page * state.PageSize).Take(state.PageSize)
+            .ToListAsync(ct);
+
+        return new TableData<AuditEntry> { TotalItems = total, Items = items };
+    }
+
+    private async Task OnSearch(string? text)
+    {
+        _search = text;
+        if (_table is not null) await _table.ReloadServerData();
+    }
+
+    private static Color ActionColor(string action) => action switch
+    {
+        "Created" => Color.Success,
+        "Deleted" => Color.Error,
+        "Updated" => Color.Info,
+        _ => Color.Secondary,
+    };
+}

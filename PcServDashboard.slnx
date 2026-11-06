@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PcServ.Core/PcServ.Core.csproj" />
+    <Project Path="src/PcServ.Data/PcServ.Data.csproj" />
+    <Project Path="src/PcServ.Web/PcServ.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PcServ.Tests/PcServ.Tests.csproj" />
+  </Folder>
+</Solution>

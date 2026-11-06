@@ -1,0 +1,122 @@
+@page "/setup"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PcServ.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+@inject SetupState SetupState
+@inject SettingsService Settings
+@inject ILogger<Setup> Logger
+
+<PageTitle>First-time setup · Tech Team Portal</PageTitle>
+
+<div class="account-card">
+    <h1 class="h3 mb-1">Welcome</h1>
+    <p class="text-secondary mb-4">@_subtitle</p>
+
+    <StatusMessage Message="@errorMessage" />
+    <EditForm Model="Input" method="post" OnValidSubmit="CreateAdmin" FormName="setup">
+        <DataAnnotationsValidator />
+        <div class="form-floating mb-3">
+            <InputText @bind-Value="Input.DisplayName" id="Input.DisplayName" class="form-control" placeholder="Your name" autofocus />
+            <label for="Input.DisplayName">Your name</label>
+            <ValidationMessage For="() => Input.DisplayName" class="text-danger" />
+        </div>
+        <div class="form-floating mb-3">
+            <InputText @bind-Value="Input.UserName" id="Input.UserName" class="form-control" autocomplete="username" placeholder="username" />
+            <label for="Input.UserName">Username</label>
+            <ValidationMessage For="() => Input.UserName" class="text-danger" />
+        </div>
+        <div class="form-floating mb-3">
+            <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="new-password" placeholder="password" />
+            <label for="Input.Password">Password (at least 10 characters)</label>
+            <ValidationMessage For="() => Input.Password" class="text-danger" />
+        </div>
+        <div class="form-floating mb-3">
+            <InputText type="password" @bind-Value="Input.ConfirmPassword" id="Input.ConfirmPassword" class="form-control" autocomplete="new-password" placeholder="password" />
+            <label for="Input.ConfirmPassword">Confirm password</label>
+            <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
+        </div>
+        <button type="submit" class="w-100 btn btn-lg btn-primary">Create administrator account</button>
+    </EditForm>
+    <p class="text-secondary small mt-4 mb-0">
+        This account can manage everything, including other users. You'll add the rest of the team from <strong>Manage → Users</strong>.
+    </p>
+</div>
+
+@code {
+    private string? errorMessage;
+    private string _subtitle = "";
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        _subtitle = await Settings.QuipAsync(QuipMoment.Setup);
+
+        if (await UserManager.Users.AnyAsync())
+        {
+            // Setup has already been done; never allow a second "first" admin.
+            SetupState.IsComplete = true;
+            RedirectManager.RedirectTo("Account/Login");
+        }
+    }
+
+    private async Task CreateAdmin()
+    {
+        // Check again in case two people opened the setup page at the same time.
+        if (await UserManager.Users.AnyAsync())
+        {
+            SetupState.IsComplete = true;
+            RedirectManager.RedirectTo("Account/Login");
+            return;
+        }
+
+        var user = new ApplicationUser
+        {
+            UserName = Input.UserName.Trim(),
+            DisplayName = Input.DisplayName.Trim(),
+            LockoutEnabled = true,
+        };
+
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            errorMessage = $"Error: {string.Join(" ", result.Errors.Select(e => e.Description))}";
+            return;
+        }
+
+        await UserManager.AddToRoleAsync(user, Roles.Admin);
+        SetupState.IsComplete = true;
+        Logger.LogInformation("First administrator {UserName} created.", user.UserName);
+
+        user.LastLoginAt = DateTime.UtcNow;
+        await UserManager.UpdateAsync(user);
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo("");
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Enter your name."), MaxLength(120)]
+        public string DisplayName { get; set; } = "";
+
+        [Required(ErrorMessage = "Choose a username."), MaxLength(64)]
+        [RegularExpression(@"^[A-Za-z0-9._-]+$", ErrorMessage = "Use only letters, numbers, dots, dashes and underscores.")]
+        public string UserName { get; set; } = "";
+
+        [Required(ErrorMessage = "Choose a password.")]
+        [StringLength(100, MinimumLength = 10, ErrorMessage = "The password must be at least 10 characters.")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Compare(nameof(Password), ErrorMessage = "The passwords don't match.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

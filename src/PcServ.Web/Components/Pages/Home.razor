@@ -1,0 +1,201 @@
+@page "/"
+@implements IDisposable
+@inject OverviewService Overview
+@inject SettingsService Settings
+@inject DistrictSettings District
+
+<PageTitle>Overview · Tech Team Portal</PageTitle>
+
+<AuthorizeView Context="auth">
+    <PageHeader Title="@($"Hello, {FirstName(auth.User.DisplayName())}")" Subtitle="@_welcome" />
+</AuthorizeView>
+
+@if (_data is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    @if (_data.Work is { } work)
+    {
+        <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Waiting on the team</MudText>
+        <div class="overview-cards mb-4">
+            <StatCard Label="Repairs open" Value="@work.OpenRepairs" Icon="@Icons.Material.Outlined.Build" Href="repairs" />
+            <StatCard Label="Orders in progress" Value="@work.OpenOrders" Icon="@Icons.Material.Outlined.LocalShipping" Href="orders" />
+            <StatCard Label="@($"To update in {District.InventoryName}")" Value="@work.InventoryUpdates" Icon="@Icons.Material.Outlined.Sync" Href="repairs?show=inventory" />
+            <StatCard Label="To deprovision" Value="@work.ToDeprovision" Icon="@Icons.Material.Outlined.PhonelinkErase" Href="repairs?show=retired" />
+            <StatCard Label="Fines to assign" Value="@work.FinesToAssign" Icon="@Icons.Material.Outlined.Payments" Href="repairs?show=fines" />
+            <StatCard Label="Map items to check" Value="@work.MapItemsToCheck" Icon="@Icons.Material.Outlined.Map" Href="maps" />
+            @if (work.AlignmentsToCheck is { } alignments)
+            {
+                <StatCard Label="Alignments to check" Value="@alignments" Icon="@Icons.Material.Outlined.Layers" Href="manage/alignments" />
+            }
+        </div>
+
+        <MudGrid Spacing="3" Class="mb-1">
+            <MudItem xs="12" md="6">
+                <MudPaper Outlined="true" Class="pa-4 h-100">
+                    <div class="d-flex align-center justify-space-between mb-2">
+                        <MudText Typo="Typo.h6" HtmlTag="h2">Longest-waiting repairs</MudText>
+                        <MudButton Href="repairs" Variant="Variant.Text" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward">All repairs</MudButton>
+                    </div>
+                    @if (work.OldestRepairs.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2">No repairs are open.</MudText>
+                    }
+                    <ul class="overview-list">
+                        @foreach (var repair in work.OldestRepairs)
+                        {
+                            <li>
+                                <span>
+                                    <strong>@repair.AssetTag</strong> · @repair.ReasonText
+                                    <span class="repair-minor d-block">@repair.SiteName · @RepairStatuses.Name(repair.Status)</span>
+                                </span>
+                                <span class="overview-age">@Age(repair.DateIn)</span>
+                            </li>
+                        }
+                    </ul>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Outlined="true" Class="pa-4 h-100">
+                    <div class="d-flex align-center justify-space-between mb-2">
+                        <MudText Typo="Typo.h6" HtmlTag="h2">Longest-waiting orders</MudText>
+                        <MudButton Href="orders" Variant="Variant.Text" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward">All orders</MudButton>
+                    </div>
+                    @if (work.OldestOrders.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2">No orders are in progress.</MudText>
+                    }
+                    <ul class="overview-list">
+                        @foreach (var order in work.OldestOrders)
+                        {
+                            <li>
+                                <span>
+                                    <a href="@($"orders/{order.Id}")"><strong>@order.Item</strong></a>
+                                    <span class="repair-minor d-block">@order.SiteName · @OrderStages.Name(order.Status, order.Contact)</span>
+                                </span>
+                                <span class="overview-age">@Age(order.StatusDate)</span>
+                            </li>
+                        }
+                    </ul>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+
+    <MudGrid Spacing="3" Class="mt-1">
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-4 h-100">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Pinned links</MudText>
+                    <MudButton Href="links" Variant="Variant.Text" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward">All links</MudButton>
+                </div>
+                @if (_data.PinnedLinks.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No pinned links yet. Managers can pin links from the Links page.</MudText>
+                }
+                else
+                {
+                    <ul class="pinned-links">
+                        @foreach (var link in _data.PinnedLinks)
+                        {
+                            <li>
+                                <a href="@link.Url" target="_blank" rel="noopener noreferrer">
+                                    <MudIcon Icon="@Icons.Material.Outlined.OpenInNew" Size="Size.Small" />
+                                    <span>
+                                        <span class="pinned-link-title">@link.Title<span class="visually-hidden"> (opens in a new tab)</span></span>
+                                        <span class="pinned-link-category">@link.Category?.Name</span>
+                                    </span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-4 h-100">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Recently updated in the wiki</MudText>
+                    <MudButton Href="wiki" Variant="Variant.Text" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward">Wiki</MudButton>
+                </div>
+                @if (_data.RecentWiki.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">Nothing has been published yet.</MudText>
+                }
+                <ul class="overview-list">
+                    @foreach (var entry in _data.RecentWiki)
+                    {
+                        <li>
+                            <span>
+                                <a href="@($"wiki/{entry.Id}")"><strong>@entry.Title</strong></a>
+                                <span class="repair-minor d-block">@entry.SectionName · <LocalTime Value="entry.At" Format="MMM d, yyyy" /> by @entry.By</span>
+                            </span>
+                        </li>
+                    }
+                </ul>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <div class="overview-cards overview-cards-small mt-4">
+        <StatCard Label="Sites" Value="@_data.Sites" Icon="@Icons.Material.Outlined.School" Href="sites" />
+        <StatCard Label="Site maps" Value="@_data.Maps" Icon="@Icons.Material.Outlined.Map" Href="maps" />
+        <StatCard Label="Wiki pages" Value="@_data.WikiPages" Icon="@Icons.Material.Outlined.MenuBook" Href="wiki" />
+        <StatCard Label="Links" Value="@_data.Links" Icon="@Icons.Material.Outlined.Link" Href="links" />
+    </div>
+}
+
+@code {
+    private static readonly TimeSpan RefreshEvery = TimeSpan.FromMinutes(1);
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private OverviewData? _data;
+    private string _welcome = "";
+    private PeriodicTimer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _welcome = await Settings.QuipAsync(QuipMoment.Welcome);
+        _data = await Overview.GetAsync((await AuthState).User);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = RefreshLoopAsync();
+    }
+
+    /// <summary>Keeps the numbers current while the page is left open, such as on a shared screen.</summary>
+    private async Task RefreshLoopAsync()
+    {
+        _timer = new PeriodicTimer(RefreshEvery);
+        try
+        {
+            while (await _timer.WaitForNextTickAsync())
+            {
+                await InvokeAsync(async () =>
+                {
+                    _data = await Overview.GetAsync((await AuthState).User);
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // The page was closed.
+        }
+    }
+
+    private static string Age(DateOnly since)
+    {
+        var days = DateOnly.FromDateTime(DateTime.Today).DayNumber - since.DayNumber;
+        return days <= 0 ? "Today" : days == 1 ? "1 day" : $"{days} days";
+    }
+
+    private static string FirstName(string displayName) =>
+        displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? displayName;
+
+    public void Dispose() => _timer?.Dispose();
+}

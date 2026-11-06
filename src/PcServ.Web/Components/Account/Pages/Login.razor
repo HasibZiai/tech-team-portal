@@ -1,0 +1,157 @@
+@page "/Account/Login"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Identity
+@using PcServ.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject ILogger<Login> Logger
+@inject IdentityRedirectManager RedirectManager
+@inject SettingsService Settings
+
+<PageTitle>Sign in · Tech Team Portal</PageTitle>
+
+<div class="account-card">
+    <h1 class="h3 mb-1">Sign in</h1>
+    <p class="text-secondary mb-4">@_subtitle</p>
+
+    <StatusMessage Message="@errorMessage" />
+    <EditForm EditContext="editContext" method="post" OnSubmit="LoginUser" FormName="login">
+        <DataAnnotationsValidator />
+        <div class="form-floating mb-3">
+            <InputText @bind-Value="Input.UserName" id="Input.UserName" class="form-control" autocomplete="username webauthn" aria-required="true" placeholder="username" autofocus />
+            <label for="Input.UserName" class="form-label">Username</label>
+            <ValidationMessage For="() => Input.UserName" class="text-danger" />
+        </div>
+        <div class="form-floating mb-3">
+            <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="current-password" aria-required="true" placeholder="password" />
+            <label for="Input.Password" class="form-label">Password</label>
+            <ValidationMessage For="() => Input.Password" class="text-danger" />
+        </div>
+        <div class="form-check mb-3">
+            <InputCheckbox @bind-Value="Input.RememberMe" id="Input.RememberMe" class="form-check-input" />
+            <label class="form-check-label" for="Input.RememberMe">Keep me signed in on this computer</label>
+        </div>
+        <button type="submit" class="w-100 btn btn-lg btn-primary">Sign in</button>
+
+        <div class="d-flex flex-column mt-3">
+            <span class="text-secondary mx-auto small">or</span>
+            <PasskeySubmit Operation="PasskeyOperation.Request" Name="Input.Passkey" EmailName="Input.UserName" class="btn btn-link mx-auto">Sign in with a passkey</PasskeySubmit>
+        </div>
+    </EditForm>
+
+    <p class="text-secondary small mt-4 mb-0">
+        Forgot your password or need an account? Ask a portal admin. They can set you up with a temporary password. If no admin is available, whoever manages the server can reset it.
+    </p>
+</div>
+
+@code {
+    private string? errorMessage;
+    private string _subtitle = "";
+    private EditContext editContext = default!;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        editContext = new EditContext(Input);
+        _subtitle = await Settings.QuipAsync(QuipMoment.LoginSubtitle);
+
+        if (HttpMethods.IsGet(HttpContext.Request.Method))
+        {
+            // Clear any leftover external cookie to ensure a clean sign-in.
+            await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+        }
+    }
+
+    public async Task LoginUser()
+    {
+        if (!string.IsNullOrEmpty(Input.Passkey?.Error))
+        {
+            errorMessage = $"Error: {Input.Passkey.Error}";
+            return;
+        }
+
+        SignInResult result;
+        string? userName;
+        if (!string.IsNullOrEmpty(Input.Passkey?.CredentialJson))
+        {
+            result = await SignInManager.PasskeySignInAsync(Input.Passkey.CredentialJson);
+            userName = null;
+        }
+        else
+        {
+            if (!editContext.Validate())
+            {
+                return;
+            }
+
+            userName = Input.UserName.Trim();
+            // Five wrong passwords in a row locks the account for 10 minutes.
+            result = await SignInManager.PasswordSignInAsync(userName, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        }
+
+        if (result.Succeeded)
+        {
+            await RecordLoginAsync(userName);
+            Logger.LogInformation("User {UserName} signed in.", userName ?? "(passkey)");
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        else if (result.RequiresTwoFactor)
+        {
+            RedirectManager.RedirectTo(
+                "Account/LoginWith2fa",
+                new() { ["returnUrl"] = ReturnUrl, ["rememberMe"] = Input.RememberMe });
+        }
+        else if (result.IsLockedOut)
+        {
+            var user = userName is null ? null : await UserManager.FindByNameAsync(userName);
+            if (user?.IsDisabled == true)
+            {
+                errorMessage = "Error: This account has been disabled. Contact a portal admin.";
+                return;
+            }
+            Logger.LogWarning("User account {UserName} locked out.", userName);
+            RedirectManager.RedirectTo("Account/Lockout");
+        }
+        else
+        {
+            errorMessage = "Error: That username and password didn't match.";
+        }
+    }
+
+    private async Task RecordLoginAsync(string? userName)
+    {
+        // Passkey sign-ins don't include a username here; they're still recorded in the server log.
+        if (userName is null) return;
+        var user = await UserManager.FindByNameAsync(userName);
+        if (user is null) return;
+
+        user.LastLoginAt = DateTime.UtcNow;
+        await UserManager.UpdateAsync(user);
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Enter your username.")]
+        public string UserName { get; set; } = "";
+
+        [Required(ErrorMessage = "Enter your password.")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; }
+
+        public PasskeyInputModel? Passkey { get; set; }
+    }
+}

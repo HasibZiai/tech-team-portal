@@ -1,0 +1,38 @@
+# Opens a pull request once a month when something this project uses has a new version.
+# Security fixes can still arrive at any time.
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - /src/PcServ.Core
+      - /src/PcServ.Data
+      - /src/PcServ.Web
+      - /tests/PcServ.Tests
+    schedule:
+      interval: monthly
+    groups:
+      dotnet-and-packages:
+        patterns: ["*"]
+    ignore:
+      # Stay on the .NET 10 LTS line. Moving to a new .NET version is a deliberate decision.
+      - dependency-name: "Microsoft.*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

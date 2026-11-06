@@ -1,0 +1,38 @@
+<MudDialog>
+    <DialogContent>
+        <EditForm id="site-form" Model="_model" OnValidSubmit="() => MudDialog.Close(DialogResult.Ok(_model))">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_model.Name" For="() => _model.Name" Label="School / site name" Variant="Variant.Outlined" AutoFocus="true" />
+                <MudStack Row="true" Spacing="3">
+                    <MudTextField @bind-Value="_model.Code" For="() => _model.Code" Label="Short code" Placeholder="e.g. LES" Variant="Variant.Outlined" Class="flex-1" />
+                    <MudSelect T="SiteType" @bind-Value="_model.Type" Label="Type" Variant="Variant.Outlined" Class="flex-1">
+                        @foreach (var t in Enum.GetValues<SiteType>())
+                        {
+                            <MudSelectItem T="SiteType" Value="t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudStack>
+                <MudTextField @bind-Value="_model.Address" For="() => _model.Address" Label="Address" Variant="Variant.Outlined" />
+                <MudTextField @bind-Value="_model.MainPhone" For="() => _model.MainPhone" Label="Main office phone" Variant="Variant.Outlined" />
+                <MudTextField @bind-Value="_model.Notes" For="() => _model.Notes" Label="Notes for techs (optional)" Variant="Variant.Outlined" Lines="3"
+                              HelperText="Parking, check-in procedure, alarm codes location, etc. Don't put passwords here." />
+                <MudSwitch T="bool" @bind-Value="_model.IsActive" Color="Color.Primary" Label="Active site" />
+            </MudStack>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="site-form" Variant="Variant.Filled" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Site Model { get; set; } = new();
+
+    private Site _model = new();
+
+    protected override void OnInitialized() => _model = Model.Copy<Site>();
+}

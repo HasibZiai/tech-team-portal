@@ -1,0 +1,102 @@
+@using PcServ.Web.Services.Maps
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField @bind-Value="_name" @bind-Value:after="() => _error = null" Label="Layer name" Variant="Variant.Outlined" MaxLength="80" AutoFocus="true" Immediate="true"
+                          HelperText="For example: Projectors, Door access, or Fire panels." />
+
+            <div>
+                <MudText Typo="Typo.subtitle2" HtmlTag="h3">Legend</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">The kinds of things on this layer. Each gets its own shape and color.</MudText>
+                <ul class="layer-legend-edit" aria-label="Legend entries">
+                    @foreach (var row in _rows)
+                    {
+                        <li>
+                            <MapShapeIcon Shape="@row.Shape" Color="@row.Color" />
+                            <MudTextField @bind-Value="row.Name" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="60" Immediate="true" Class="layer-legend-name" />
+                            <MudSelect T="string" @bind-Value="row.Shape" Label="Shape" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="layer-legend-choice">
+                                @foreach (var shape in MapShapes.All)
+                                {
+                                    <MudSelectItem T="string" Value="shape">@MapShapes.DisplayName(shape)</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudSelect T="string" @bind-Value="row.Color" Label="Color" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="layer-legend-choice"
+                                       ToStringFunc="@(hex => MapColors.All.FirstOrDefault(c => c.Hex == hex).Name ?? hex)">
+                                @foreach (var color in MapColors.All)
+                                {
+                                    <MudSelectItem T="string" Value="color.Hex">@color.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                            <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" Color="Color.Error" Disabled="_rows.Count == 1"
+                                           aria-label="@($"Remove {(string.IsNullOrWhiteSpace(row.Name) ? "this entry" : row.Name)} from the legend")" OnClick="() => _rows.Remove(row)" />
+                        </li>
+                    }
+                </ul>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-2" Disabled="_rows.Count >= MapLayerService.MaxLegendEntries" OnClick="AddRow">Add to legend</MudButton>
+            </div>
+
+            @if (Layer is null)
+            {
+                <MudText Typo="Typo.body2">New layers are visible to Techs and above. A manager can change that on the map.</MudText>
+            }
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        @if (Layer is not null)
+        {
+            <MudButton Color="Color.Error" StartIcon="@Icons.Material.Outlined.Delete" OnClick="() => MudDialog.Close(DialogResult.Ok(new MapLayerEdit(null, [], Delete: true)))">Delete layer</MudButton>
+            <MudSpacer />
+        }
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">@(Layer is null ? "Create layer" : "Save")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>The layer being edited, or null when making a new one.</summary>
+    [Parameter] public MapLayerView? Layer { get; set; }
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<MapLayerEdit, Task<string?>>? OnSave { get; set; }
+
+    private sealed class Row
+    {
+        public int? Id { get; init; }
+        public string Name { get; set; } = "";
+        public string Shape { get; set; } = MapShapes.Circle;
+        public string Color { get; set; } = MapColors.All[0].Hex;
+    }
+
+    private string? _name;
+    private string? _error;
+    private List<Row> _rows = [];
+
+    protected override void OnInitialized()
+    {
+        _name = Layer?.Name;
+        _rows = Layer?.Legend?.Select(e => new Row { Id = e.Id, Name = e.Name, Shape = e.Shape, Color = e.Color }).ToList() ?? [];
+        if (_rows.Count == 0) AddRow();
+    }
+
+    /// <summary>Each new entry starts on a shape and color not yet used, so entries differ without any effort.</summary>
+    private void AddRow()
+    {
+        var shape = MapShapes.All.FirstOrDefault(s => _rows.All(r => r.Shape != s)) ?? MapShapes.All[0];
+        var color = MapColors.All.Select(c => c.Hex).FirstOrDefault(c => _rows.All(r => r.Color != c)) ?? MapColors.All[0].Hex;
+        _rows.Add(new Row { Shape = shape, Color = color });
+    }
+
+    private async Task Save()
+    {
+        var edit = new MapLayerEdit(_name, _rows.Select(r => new MapLegendEntryEdit(r.Id, r.Name, r.Shape, r.Color)).ToList(), Delete: false);
+        _error = OnSave is null ? null : await OnSave(edit);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(edit));
+    }
+}

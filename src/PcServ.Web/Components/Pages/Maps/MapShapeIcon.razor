@@ -1,0 +1,6 @@
+<svg class="map-shape-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="@Color" stroke="#1B2735" stroke-width="1" d="@MapShapes.Path(Shape)" /></svg>
+
+@code {
+    [Parameter, EditorRequired] public string Shape { get; set; } = MapShapes.Circle;
+    [Parameter, EditorRequired] public string Color { get; set; } = "";
+}

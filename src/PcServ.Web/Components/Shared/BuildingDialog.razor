@@ -1,0 +1,27 @@
+<MudDialog>
+    <DialogContent>
+        <EditForm id="building-form" Model="_model" OnValidSubmit="() => MudDialog.Close(DialogResult.Ok(_model))">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_model.Name" For="() => _model.Name" Label="Building name" Placeholder="e.g. Main Building, Gym, Portables" Variant="Variant.Outlined" AutoFocus="true" />
+                <MudNumericField T="int" @bind-Value="_model.Floors" For="() => _model.Floors" Label="Number of floors" Variant="Variant.Outlined" Min="1" Max="20"
+                                 HelperText="Each floor will get its own map in the Site Maps feature." />
+                <MudTextField @bind-Value="_model.Notes" For="() => _model.Notes" Label="Notes (optional)" Variant="Variant.Outlined" Lines="2" />
+            </MudStack>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="building-form" Variant="Variant.Filled" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Building Model { get; set; } = new();
+
+    private Building _model = new();
+
+    protected override void OnInitialized() => _model = Model.Copy<Building>();
+}

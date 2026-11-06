@@ -1,0 +1,19 @@
+@page "/not-found"
+@attribute [AllowAnonymous]
+@layout MainLayout
+@inject SettingsService Settings
+
+<PageTitle>Page not found · Tech Team Portal</PageTitle>
+
+<div class="centered-notice">
+    <MudText Typo="Typo.h2" HtmlTag="h1" Color="Color.Primary">404</MudText>
+    <MudText Typo="Typo.h6" HtmlTag="p">Page not found</MudText>
+    <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-1">@_line</MudText>
+    <MudButton Href="" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Back to overview</MudButton>
+</div>
+
+@code {
+    private string _line = Quips.PlainFor(QuipMoment.NotFound);
+
+    protected override async Task OnInitializedAsync() => _line = await Settings.QuipAsync(QuipMoment.NotFound);
+}

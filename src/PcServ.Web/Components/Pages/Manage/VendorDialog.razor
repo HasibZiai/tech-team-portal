@@ -1,0 +1,41 @@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField @bind-Value="_model.Name" @bind-Value:after="() => _error = null" Label="Vendor name" Variant="Variant.Outlined" MaxLength="120" AutoFocus="true" Immediate="true" />
+            <MudTextField @bind-Value="_model.Website" @bind-Value:after="() => _error = null" Label="Website (optional)" Variant="Variant.Outlined" MaxLength="300" Immediate="true" Placeholder="https://" />
+            <MudTextField @bind-Value="_model.Phone" Label="Phone (optional)" Variant="Variant.Outlined" MaxLength="40" Immediate="true" />
+            <MudTextField @bind-Value="_model.Notes" Label="Notes (optional)" Variant="Variant.Outlined" Lines="2" MaxLength="1000" Immediate="true"
+                          HelperText="For example, what they're approved for. Don't include passwords." />
+            <MudSwitch T="bool" @bind-Value="_model.IsApproved" Color="Color.Primary" Label="Approved" />
+            <MudText Typo="Typo.body2">Turn this off when a vendor loses approval. It leaves the list for new orders, and past orders keep it.</MudText>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Vendor Vendor { get; set; } = new();
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<Vendor, Task<string?>>? OnSave { get; set; }
+
+    private Vendor _model = new();
+    private string? _error;
+
+    protected override void OnInitialized() => _model = Vendor.Copy<Vendor>();
+
+    private async Task Save()
+    {
+        _error = OnSave is null ? null : await OnSave(_model);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

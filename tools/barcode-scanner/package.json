@@ -1,0 +1,12 @@
+{
+    "name":  "pcserv-barcode-scanner",
+    "private":  true,
+    "description":  "Builds the camera scanner into one file. Only needed when changing it: the result is committed.",
+    "dependencies":  {
+                         "barcode-detector":  "3.2.3",
+                         "esbuild":  "0.28.2"
+                     },
+    "scripts":  {
+                    "build":  "esbuild entry.js --bundle --format=esm --minify --outfile=../../src/PcServ.Web/wwwroot/lib/barcode/scanner.js \u0026\u0026 node -e \"require(\u0027fs\u0027).copyFileSync(\u0027node_modules/zxing-wasm/dist/reader/zxing_reader.wasm\u0027,\u0027../../src/PcServ.Web/wwwroot/lib/barcode/zxing_reader.wasm\u0027)\""
+                }
+}

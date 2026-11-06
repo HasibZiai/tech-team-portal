@@ -1,0 +1,190 @@
+@inject DistrictSettings District
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudStack Row="true" Spacing="3">
+                <MudTextField @bind-Value="_serial" Label="Serial number" Variant="Variant.Outlined" MaxLength="60" Immediate="true" Class="flex-1" />
+                <MudSelect T="int" @bind-Value="_modelId" Label="Model" Variant="Variant.Outlined" Class="flex-1"
+                           ToStringFunc="@(id => Models.FirstOrDefault(m => m.Id == id)?.Name ?? "")">
+                    <MudSelectItem T="int" Value="0">Not set</MudSelectItem>
+                    @foreach (var model in Models.Where(m => m.IsActive || m.Id == Repair.ModelId))
+                    {
+                        <MudSelectItem T="int" Value="model.Id">@model.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+            <MudStack Row="true" Spacing="3">
+                <MudSelect T="int" @bind-Value="_siteId" Label="Site" Variant="Variant.Outlined" Class="flex-1"
+                           ToStringFunc="@(id => Sites.FirstOrDefault(s => s.Id == id)?.Name ?? Repair.SiteName)">
+                    @foreach (var site in Sites)
+                    {
+                        <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTextField @bind-Value="_pickupPoint" Label="Collected from (optional)" Variant="Variant.Outlined" MaxLength="80" Immediate="true" Class="flex-1" />
+            </MudStack>
+            <MudSelect T="int" @bind-Value="_reasonId" Label="Reason for repair" Variant="Variant.Outlined"
+                       ToStringFunc="@(id => id == OtherReason ? "Other" : Reasons.FirstOrDefault(r => r.Id == id)?.Name ?? "")">
+                @foreach (var reason in Reasons.Where(r => r.IsActive || r.Id == Repair.ReasonId))
+                {
+                    <MudSelectItem T="int" Value="reason.Id">@reason.Name</MudSelectItem>
+                }
+                <MudSelectItem T="int" Value="OtherReason">Other</MudSelectItem>
+            </MudSelect>
+            @if (_reasonId == OtherReason)
+            {
+                <MudTextField @bind-Value="_otherReason" Label="What's wrong" Variant="Variant.Outlined" MaxLength="200" Immediate="true" />
+            }
+            <MudSelect T="RepairStatus" @bind-Value="_status" Label="Status" Variant="Variant.Outlined" ToStringFunc="RepairStatuses.Name">
+                @foreach (var status in RepairStatuses.All)
+                {
+                    <MudSelectItem T="RepairStatus" Value="status">@RepairStatuses.Name(status)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudStack Row="true" Spacing="3">
+                <MudDatePicker @bind-Date="_dateIn" Label="Date in" Variant="Variant.Outlined" MaxDate="DateTime.Today" DateFormat="MMM d, yyyy" Editable="true" Class="flex-1" />
+                @if (RepairStatuses.IsDone(_status))
+                {
+                    <MudDatePicker @bind-Date="_dateOut" Label="Date out" Variant="Variant.Outlined" MaxDate="DateTime.Today" DateFormat="MMM d, yyyy" Editable="true" Class="flex-1"
+                                   HelperText="Leave blank for today." />
+                }
+            </MudStack>
+            <MudTextField @bind-Value="_notes" Label="Repair notes (optional)" Variant="Variant.Outlined" Lines="3" MaxLength="2000" Immediate="true"
+                          HelperText="@($"What was done, and parts used or pulled for reuse. Leave out student names: those stay in {District.InventoryName}.")" />
+
+            <div>
+                <MudText Typo="Typo.subtitle2" HtmlTag="h3">@DistrictSettings.Label(District.InventoryName)</MudText>
+                @if (_inventoryCleared || Repair.InventoryUpdatedTo is null)
+                {
+                    <MudText Typo="Typo.body2">Not marked as updated yet. @DistrictSettings.Sentence(District.InventoryName) should say @RepairStatuses.InventoryName(_status).</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">
+                        Updated to @RepairStatuses.InventoryName(Repair.InventoryUpdatedTo.Value) on @Repair.InventoryUpdatedOn?.ToString("MMM d, yyyy") by @Repair.InventoryUpdatedBy.
+                        @if (Repair.InventoryUpdatedTo != _status)
+                        {
+                            <strong>It now needs to say @RepairStatuses.InventoryName(_status).</strong>
+                        }
+                    </MudText>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Class="pa-0" OnClick="ClearInventory">That was a mistake: mark as not updated</MudButton>
+                }
+                <MudCheckBox T="bool" @bind-Value="_fineNeeded" Color="Color.Primary" Dense="true" Label="@($"A fine should be assigned in {District.InventoryName}")" Class="mt-1" />
+                @if (_fineNeeded)
+                {
+                    <MudCheckBox T="bool" @bind-Value="_fineDone" Color="Color.Primary" Dense="true" Label="The fine has been assigned" />
+                }
+            </div>
+
+            @if (_status == RepairStatus.BeyondRepair)
+            {
+                <div>
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h3">@DistrictSettings.Label(District.DeviceConsoleName)</MudText>
+                    @if (Repair.DeprovisionedOn is { } deprovisionedOn && !_deprovisionCleared)
+                    {
+                        <MudText Typo="Typo.body2">Deprovisioned on @deprovisionedOn.ToString("MMM d, yyyy") by @Repair.DeprovisionedBy.</MudText>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Class="pa-0" OnClick="ClearDeprovisioned">That was a mistake: mark as not deprovisioned</MudButton>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">This device is out of circulation, and still needs deprovisioning.</MudText>
+                    }
+                </div>
+            }
+
+            @if (History.Count > 0)
+            {
+                <div>
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h3">Earlier repairs of this device</MudText>
+                    <ul class="order-history mt-1">
+                        @foreach (var earlier in History)
+                        {
+                            <li>
+                                <strong>@earlier.DateIn.ToString("MMM d, yyyy")</strong>: @earlier.ReasonText (@RepairStatuses.Name(earlier.Status))
+                                @if (!string.IsNullOrEmpty(earlier.Notes))
+                                {
+                                    <div class="pre-line">@earlier.Notes</div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int OtherReason = -1;
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public RepairView Repair { get; set; } = default!;
+    [Parameter] public IReadOnlyList<Site> Sites { get; set; } = [];
+    [Parameter] public IReadOnlyList<RepairListItem> Models { get; set; } = [];
+    [Parameter] public IReadOnlyList<RepairListItem> Reasons { get; set; } = [];
+    [Parameter] public IReadOnlyList<RepairView> History { get; set; } = [];
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<RepairEdit, Task<string?>>? OnSave { get; set; }
+    [Parameter] public Func<Task>? OnClearInventory { get; set; }
+    [Parameter] public Func<Task>? OnClearDeprovisioned { get; set; }
+
+    private string? _serial, _otherReason, _pickupPoint, _notes, _error;
+    private int _modelId, _siteId, _reasonId;
+    private RepairStatus _status;
+    private DateTime? _dateIn, _dateOut;
+    private bool _fineNeeded, _fineDone, _inventoryCleared, _deprovisionCleared;
+
+    protected override void OnInitialized()
+    {
+        _serial = Repair.SerialNumber;
+        _modelId = Repair.ModelId ?? 0;
+        _siteId = Repair.SiteId;
+        _reasonId = Repair.ReasonId ?? OtherReason;
+        _otherReason = Repair.OtherReason;
+        _pickupPoint = Repair.PickupPoint;
+        _status = Repair.Status;
+        _dateIn = Repair.DateIn.ToDateTime(TimeOnly.MinValue);
+        _dateOut = Repair.DateOut?.ToDateTime(TimeOnly.MinValue);
+        _notes = Repair.Notes;
+        _fineNeeded = Repair.FineNeeded;
+        _fineDone = Repair.FineDone;
+    }
+
+    private async Task ClearDeprovisioned()
+    {
+        if (OnClearDeprovisioned is not null) await OnClearDeprovisioned();
+        _deprovisionCleared = true;
+    }
+
+    private async Task ClearInventory()
+    {
+        if (OnClearInventory is not null) await OnClearInventory();
+        _inventoryCleared = true;
+    }
+
+    private async Task Save()
+    {
+        if (_dateIn is not { } dateIn)
+        {
+            _error = "Choose the date in.";
+            return;
+        }
+        DateOnly? dateOut = RepairStatuses.IsDone(_status) && _dateOut is { } chosen ? DateOnly.FromDateTime(chosen) : null;
+        var edit = new RepairEdit(_serial, _modelId == 0 ? null : _modelId, _siteId, _reasonId == OtherReason ? null : _reasonId, _reasonId == OtherReason ? _otherReason : null,
+            _pickupPoint, _status, DateOnly.FromDateTime(dateIn), dateOut, _notes, _fineNeeded, _fineDone);
+        _error = OnSave is null ? null : await OnSave(edit);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

@@ -1,0 +1,147 @@
+@page "/orders"
+@attribute [Authorize(Policy = Policies.CanEdit)]
+@inject OrderService Orders
+@inject VendorService VendorList
+@inject AppDbFactory DbFactory
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject SettingsService AppSettings
+
+<PageTitle>Orders · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Orders" Subtitle="What's been requested, and where it's got to. Longest waiting first.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="NewOrder">New order</MudButton>
+    </Actions>
+</PageHeader>
+
+<div class="order-filters mb-3">
+    <MudTextField @bind-Value="_search" Label="Search" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" DebounceInterval="150"
+                  HelperText="Item, person, contact, room, vendor or quote number" />
+    <MudSelect T="string" @bind-Value="_stageFilter" Label="Stage" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+        <MudSelectItem T="string" Value="@OpenFilter">All open orders</MudSelectItem>
+        <MudSelectItem T="string" Value="@AllFilter">All orders</MudSelectItem>
+        @foreach (var stage in Enum.GetValues<OrderStatus>())
+        {
+            <MudSelectItem T="string" Value="@stage.ToString()">@OrderStages.Name(stage)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int" @bind-Value="_siteFilter" Label="Site" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+               ToStringFunc="@(id => id == 0 ? "All sites" : _sites.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+        <MudSelectItem T="int" Value="0">All sites</MudSelectItem>
+        @foreach (var site in _sites)
+        {
+            <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+        }
+    </MudSelect>
+</div>
+
+@if (_orders is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_orders.Count == 0)
+{
+    <EmptyState Title="No orders yet" Icon="@Icons.Material.Outlined.LocalShipping">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewOrder">New order</MudButton>
+    </EmptyState>
+}
+else
+{
+    <MudTable T="OrderView" Items="Filtered" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Item</MudTh>
+            <MudTh>Site</MudTh>
+            <MudTh>For</MudTh>
+            <MudTh>Vendor</MudTh>
+            <MudTh>Stage</MudTh>
+            <MudTh>Since</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Item"><MudLink Href="@($"orders/{context.Id}")" Underline="Underline.Always">@context.Item</MudLink>@(context.Quantity > 1 ? $" × {context.Quantity}" : "")</MudTd>
+            <MudTd DataLabel="Site">@context.SiteName</MudTd>
+            <MudTd DataLabel="For">@ForText(context)</MudTd>
+            <MudTd DataLabel="Vendor">@context.VendorName</MudTd>
+            <MudTd DataLabel="Stage"><OrderStageChip Status="context.Status" Contact="@context.Contact" /></MudTd>
+            <MudTd DataLabel="Since" Class="text-nowrap">@SinceText(context)</MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No orders match those filters.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+@code {
+    private const string OpenFilter = "open", AllFilter = "all";
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<OrderView>? _orders;
+    private List<Site> _sites = [];
+    private string? _search;
+    private string _stageFilter = OpenFilter;
+    private int _siteFilter;
+
+    private IEnumerable<OrderView> Filtered => (_orders ?? [])
+        .Where(o => _stageFilter switch
+        {
+            OpenFilter => OrderStages.IsOpen(o.Status),
+            AllFilter => true,
+            var stage => o.Status.ToString() == stage,
+        })
+        .Where(o => _siteFilter == 0 || o.SiteId == _siteFilter)
+        .Where(o => string.IsNullOrWhiteSpace(_search) || new[] { o.Item, o.RequestedFor, o.Contact, o.Room, o.VendorName, o.QuoteNumber }
+            .Any(text => text?.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase) == true));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using (var db = await DbFactory.CreateAsync())
+        {
+            _sites = await db.Sites.AsNoTracking().Where(s => s.IsActive).OrderBy(s => s.SortOrder).ThenBy(s => s.Name).ToListAsync();
+        }
+        _orders = await Orders.ListAsync((await AuthState).User);
+    }
+
+    private static string ForText(OrderView order) =>
+        string.Join(", ", new[] { order.RequestedFor, order.Room }.Where(t => !string.IsNullOrEmpty(t)));
+
+    private static string SinceText(OrderView order)
+    {
+        var date = order.StatusDate.ToString("MMM d, yyyy");
+        if (!OrderStages.IsOpen(order.Status)) return date;
+        var days = DateOnly.FromDateTime(DateTime.Today).DayNumber - order.StatusDate.DayNumber;
+        return days switch { <= 0 => $"{date} (today)", 1 => $"{date} (1 day)", _ => $"{date} ({days} days)" };
+    }
+
+    private async Task NewOrder()
+    {
+        var user = (await AuthState).User;
+        var vendors = await VendorList.ListAsync(approvedOnly: true);
+        var created = 0;
+        var parameters = new DialogParameters<OrderDialog>
+        {
+            { d => d.Sites, _sites },
+            { d => d.Vendors, vendors },
+            { d => d.OnSave, async edit =>
+                {
+                    try
+                    {
+                        created = await Orders.CreateAsync(edit, DateOnly.FromDateTime(DateTime.Today), user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<OrderDialog>("New order", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false } && created != 0)
+        {
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+            Nav.NavigateTo($"orders/{created}");
+        }
+    }
+}

@@ -1,0 +1,29 @@
+@page "/Error"
+@attribute [AllowAnonymous]
+@using System.Diagnostics
+
+<PageTitle>Error · Tech Team Portal</PageTitle>
+
+<div class="centered-notice">
+    <MudIcon Icon="@Icons.Material.Outlined.ErrorOutline" Size="Size.Large" Color="Color.Error" />
+    <MudText Typo="Typo.h5" HtmlTag="h1" Class="mt-3">Something went wrong</MudText>
+    <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-1">
+        The request couldn't be completed. Try again, and if it keeps happening, let an admin know.
+    </MudText>
+    @if (ShowRequestId)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-3">Reference: <code>@RequestId</code></MudText>
+    }
+    <MudButton Href="" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Back to overview</MudButton>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

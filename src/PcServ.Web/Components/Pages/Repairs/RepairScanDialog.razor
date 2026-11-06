@@ -1,0 +1,166 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">Experimental: this hasn't been fully tested on real tags and phones. Check that each asset tag is right after scanning.</MudAlert>
+            @if (_problem is null)
+            {
+                <div class="scan-view">
+                    <video @ref="_video" muted playsinline aria-label="Camera view"></video>
+                    <div class="scan-guide" aria-hidden="true"></div>
+                </div>
+            }
+            else
+            {
+                <video @ref="_video" muted playsinline hidden></video>
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">@ProblemText</MudAlert>
+            }
+            <MudText Typo="Typo.body2" role="status"><strong>@_status</strong></MudText>
+            <input type="file" accept="image/*" capture="environment" hidden @ref="_photoInput" aria-hidden="true" tabindex="-1" />
+            <div class="d-flex flex-wrap gap-2">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.PhotoCamera" Disabled="_scanner is null" OnClick="TakePhoto">Take a photo</MudButton>
+                @if (_hasLight)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" aria-pressed="@(_lightOn ? "true" : "false")" OnClick="ToggleLight">@(_lightOn ? "Turn light off" : "Turn light on")</MudButton>
+                }
+            </div>
+            @if (BatchDescription is not null)
+            {
+                <MudSwitch T="bool" @bind-Value="_batch" Color="Color.Primary" Label="Keep scanning, and check each one in" />
+                @if (_batch)
+                {
+                    <MudText Typo="Typo.body2">Each scan is checked in as: @BatchDescription.</MudText>
+                }
+            }
+            else
+            {
+                <MudText Typo="Typo.body2">To check in several devices quickly, close this, choose the site and reason, then scan again.</MudText>
+            }
+            @if (_log.Count > 0)
+            {
+                <ul class="scan-log" aria-label="Scanned so far">
+                    @foreach (var line in _log)
+                    {
+                        <li>@line</li>
+                    }
+                </ul>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Cancel()">Done</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Whether a scanned code could be an asset tag. Anything else in view, like a serial number, is ignored.</summary>
+    [Parameter] public Func<string, bool> IsAssetTag { get; set; } = _ => true;
+
+    /// <summary>What each scan is checked in as, or null if the site and reason aren't chosen yet.</summary>
+    [Parameter] public string? BatchDescription { get; set; }
+
+    /// <summary>Checks in one device, and returns the line to show and whether it worked.</summary>
+    [Parameter] public Func<string, Task<(bool Ok, string Message)>>? OnBatchScan { get; set; }
+
+    private ElementReference _video, _photoInput;
+    private IJSObjectReference? _module, _scanner;
+    private DotNetObjectReference<RepairScanDialog>? _self;
+    private string? _problem;
+    private string _status = "Starting the camera...";
+    private bool _batch, _hasLight, _lightOn, _closed;
+    private readonly List<string> _log = [];
+
+    private string ProblemText => _problem switch
+    {
+        "insecure" => "Live scanning needs a secure (HTTPS) connection that this browser trusts. You can still take a photo of the tag.",
+        "denied" => "This browser isn't allowed to use the camera. Allow it in the browser's settings, or take a photo of the tag.",
+        "missing" => "No camera was found on this device.",
+        _ => "The camera couldn't be started. You can still take a photo of the tag.",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _self = DotNetObjectReference.Create(this);
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./lib/barcode/scanner.js");
+        _scanner = await _module.InvokeAsync<IJSObjectReference>("start", _video, _photoInput, _self);
+        _problem = await _scanner.InvokeAsync<string?>("problem");
+        _hasLight = await _scanner.InvokeAsync<bool>("hasLight");
+        _status = _problem is null ? "Hold the camera close, so the barcode fills most of the box." : "";
+        StateHasChanged();
+    }
+
+    /// <summary>Called when a barcode is read. Returns whether it was used, which is what makes the device beep.</summary>
+    [JSInvokable]
+    public async Task<bool> Scanned(string code)
+    {
+        if (_closed) return false;
+        var tag = code.Trim();
+        if (!IsAssetTag(tag))
+        {
+            _status = $"Read {tag}, which isn't an asset tag. Point the camera at the asset tag.";
+            StateHasChanged();
+            return false;
+        }
+
+        if (_batch && OnBatchScan is not null)
+        {
+            var (ok, message) = await OnBatchScan(tag);
+            _log.Insert(0, message);
+            _status = message;
+            StateHasChanged();
+            return ok;
+        }
+
+        _closed = true;
+        MudDialog.Close(DialogResult.Ok(tag));
+        return true;
+    }
+
+    [JSInvokable]
+    public void PhotoReading()
+    {
+        _status = "Reading the photo...";
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void PhotoUnreadable()
+    {
+        _status = "No barcode was found in that photo. Try again, closer and in focus, with the barcode filling most of the picture.";
+        StateHasChanged();
+    }
+
+    private async Task TakePhoto()
+    {
+        if (_scanner is not null) await _scanner.InvokeVoidAsync("takePhoto");
+    }
+
+    private async Task ToggleLight()
+    {
+        if (_scanner is not null) _lightOn = await _scanner.InvokeAsync<bool>("toggleLight");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _closed = true;
+        try
+        {
+            if (_scanner is not null)
+            {
+                await _scanner.InvokeVoidAsync("stop");
+                await _scanner.DisposeAsync();
+            }
+            if (_module is not null) await _module.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser has already gone, and the camera with it.
+        }
+        _self?.Dispose();
+    }
+}

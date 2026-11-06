@@ -1,0 +1,741 @@
+@page "/maps/{Id:int}"
+@using PcServ.Web.Services.Maps
+@implements IAsyncDisposable
+@inject SiteMapService Maps
+@inject MapPhotoService Photos
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+@inject IDialogService Dialogs
+@inject IAuthorizationService Authorization
+@inject MapExportService Exports
+@inject MapLayerService CustomLayers
+@inject OrderService OrderRecords
+@inject NavigationManager Nav
+
+<PageTitle>@(_map?.Name ?? "Site map") · Tech Team Portal</PageTitle>
+
+@if (_loaded && _map is null)
+{
+    <EmptyState Title="Map not found" Icon="@Icons.Material.Outlined.Map">
+        <MudButton Href="maps" Variant="Variant.Filled" Color="Color.Primary">Back to site maps</MudButton>
+    </EmptyState>
+}
+else if (_map is not null)
+{
+    <div class="map-page">
+        <aside class="map-panel" aria-label="Map layers and legend">
+            <MudButton Href="maps" Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowBack" Class="mb-2">All maps</MudButton>
+            <MudText Typo="Typo.h6" HtmlTag="h1">@_map.SiteName</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">@_map.Name</MudText>
+
+            @if (_missingLayers)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                    This link includes a layer that isn't available to your account, or that has been removed.
+                </MudAlert>
+            }
+
+            <div class="map-share mb-3">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Link" OnClick="CopyLink">Copy link to this view</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.PictureAsPdf" Disabled="_exporting" OnClick="SavePdf">
+                    @(_exporting ? "Making PDF..." : "Save as PDF")
+                </MudButton>
+                <MudText Typo="Typo.caption" Class="d-block">
+                    Both use the layers switched on and the part of the map showing. Photos and notes aren't in the PDF.
+                </MudText>
+                @if (_shareLink is not null)
+                {
+                    <MudTextField T="string" Value="_shareLink" ReadOnly="true" Label="Link to this view" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-1" />
+                    <MudText Typo="Typo.caption" Class="d-block" role="status">
+                        @(_linkCopied ? "Copied." : "Your browser didn't allow copying, so select the link above and copy it.")
+                        People who open it sign in, and see only what their role allows.
+                    </MudText>
+                }
+            </div>
+
+            <AuthorizeView Policy="@Policies.CanManage">
+                <MudSelect T="string" Value="_map.MinimumRole" ValueChanged="SetMapRole" Label="Who can open this map" Dense="true"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Class="map-layer-role">
+                    @foreach (var role in Roles.All)
+                    {
+                        <MudSelectItem T="string" Value="role">@role and above</MudSelectItem>
+                    }
+                </MudSelect>
+            </AuthorizeView>
+
+            @if (_canEdit)
+            {
+                @if (_placing)
+                {
+                    <div class="map-move-panel mb-3">
+                        <MudText Typo="Typo.body2" role="status">@PlacingMessage</MudText>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="PlaceAtCenter">Use the middle of the view</MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => SetPlacing(false)">Cancel</MudButton>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.AddAPhoto" Class="mb-2" OnClick="() => SetPlacing(true)">Add a photo or note</MudButton>
+                }
+            }
+
+            @if (_canEdit && AllItems.Any())
+            {
+                <MudSwitch T="bool" Value="_moveMode" ValueChanged="SetMoveMode" Color="Color.Primary" Label="Move items" Class="d-block" />
+                @if (_moveMode)
+                {
+                    <div class="map-move-panel">
+                        <MudText Typo="Typo.body2" role="status">@MoveStatus</MudText>
+                        @if (_selected is not null)
+                        {
+                            <div class="map-nudge" role="group" aria-label="@($"Move {_selected.Label ?? "item"} a small step")">
+                                <MudIconButton Class="nudge-up" Icon="@Icons.Material.Filled.KeyboardArrowUp" Variant="Variant.Outlined" Size="Size.Small" aria-label="Move up" OnClick="() => Nudge(0, -1)" />
+                                <MudIconButton Class="nudge-left" Icon="@Icons.Material.Filled.KeyboardArrowLeft" Variant="Variant.Outlined" Size="Size.Small" aria-label="Move left" OnClick="() => Nudge(-1, 0)" />
+                                <MudIconButton Class="nudge-right" Icon="@Icons.Material.Filled.KeyboardArrowRight" Variant="Variant.Outlined" Size="Size.Small" aria-label="Move right" OnClick="() => Nudge(1, 0)" />
+                                <MudIconButton Class="nudge-down" Icon="@Icons.Material.Filled.KeyboardArrowDown" Variant="Variant.Outlined" Size="Size.Small" aria-label="Move down" OnClick="() => Nudge(0, 1)" />
+                            </div>
+                        }
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Undo" Disabled="_undo.Count == 0" OnClick="Undo" Class="mt-2">Undo last move</MudButton>
+                    </div>
+                }
+            }
+
+            <MudText Typo="Typo.overline" HtmlTag="h2">Layers</MudText>
+            @if (_map.Layers.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">This map has no separate layers. Everything is part of the image.</MudText>
+            }
+            @foreach (var layer in _map.Layers)
+            {
+                <div class="map-layer-row">
+                    <MudCheckBox T="bool" Value="IsVisible(layer)" ValueChanged="visible => SetVisible(layer, visible)" Color="Color.Primary" Dense="true" Label="@layer.Name" />
+                    <span class="map-layer-count">@layer.Features.Count</span>
+                </div>
+                @if (_canEdit && MapLayerService.CanChange(layer, _map.Id))
+                {
+                    <div class="map-layer-actions">
+                        <MudMenu Label="Add item" Variant="Variant.Outlined" Size="Size.Small" Dense="true" AriaLabel="@($"Add item to {layer.Name}")">
+                            @foreach (var entry in layer.Legend ?? [])
+                            {
+                                <MudMenuItem OnClick="() => StartPlacing(layer, entry)">
+                                    <span class="d-inline-flex align-center gap-2"><MapShapeIcon Shape="@entry.Shape" Color="@entry.Color" /> @entry.Name</span>
+                                </MudMenuItem>
+                            }
+                        </MudMenu>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Edit layer {layer.Name}")" OnClick="() => EditLayer(layer)">Edit layer</MudButton>
+                    </div>
+                }
+                @if (layer.Kind != nameof(MapLayerKind.Orders))
+                {
+                    <AuthorizeView Policy="@Policies.CanManage">
+                        <MudSelect T="string" Value="layer.MinimumRole" ValueChanged="role => SetLayerRole(layer, role)" Label="Who can see this" Dense="true"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="map-layer-role">
+                            @foreach (var role in Roles.All)
+                            {
+                                <MudSelectItem T="string" Value="role">@role and above</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </AuthorizeView>
+                }
+            }
+
+            @if (_canEdit)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-1" OnClick="AddLayer">Add a layer</MudButton>
+            }
+
+            @if (_map.Layers.Any(l => l.Features.Any(f => f.Symbol is not null) || l.Legend is { Count: > 0 }))
+            {
+                <MudText Typo="Typo.overline" HtmlTag="h2" Class="mt-4 d-block">Legend</MudText>
+                @foreach (var symbol in _map.Layers.SelectMany(l => l.Features).Select(f => f.Symbol).Where(s => s is not null).Distinct())
+                {
+                    <div class="map-legend-row">
+                        <span class="map-legend-swatch @LegendClass(symbol!)"></span>
+                        <MudText Typo="Typo.body2">@LegendName(symbol!)</MudText>
+                    </div>
+                }
+                @foreach (var layer in _map.Layers.Where(l => l.Legend is { Count: > 0 }))
+                {
+                    @foreach (var entry in layer.Legend!)
+                    {
+                        <div class="map-legend-row">
+                            <MapShapeIcon Shape="@entry.Shape" Color="@entry.Color" />
+                            <MudText Typo="Typo.body2">@entry.Name <span class="map-layer-count">(@layer.Name)</span></MudText>
+                        </div>
+                    }
+                }
+            }
+
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.FitScreen" OnClick="ResetView" Class="mt-4">Fit map to screen</MudButton>
+
+            @if (AllItems.Any())
+            {
+                <MudText Typo="Typo.overline" HtmlTag="h2" Class="mt-4 d-block">Find on this map</MudText>
+                <MudTextField @bind-Value="_itemSearch" Label="Search names" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
+                @if (ReviewCount > 0)
+                {
+                    <MudSwitch T="bool" @bind-Value="_reviewOnly" Color="Color.Primary" Label="@($"Only items to check ({ReviewCount})")" Class="mt-1" />
+                }
+                <ul class="map-item-list" aria-label="Items on this map">
+                    @foreach (var item in VisibleItems)
+                    {
+                        <li>
+                            <button type="button" class="map-item @(item.NeedsReview ? "needs-review" : "")" @onclick="() => ItemClicked(item)">
+                                @if (LegendEntryOf(item) is { } itemEntry)
+                                {
+                                    <MapShapeIcon Shape="@itemEntry.Shape" Color="@itemEntry.Color" />
+                                }
+                                else
+                                {
+                                    <span class="map-legend-swatch @LegendClass(item.Symbol ?? "")"></span>
+                                }
+                                <span>@(item.Label ?? "(no name)")</span>
+                                @if (item.NeedsReview)
+                                {
+                                    <span class="map-item-flag">Check</span>
+                                }
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </aside>
+
+        <div class="map-canvas" @ref="_canvas" aria-label="@($"Map of {_map.SiteName}. Use the arrow keys to pan and the plus and minus keys to zoom.")"></div>
+    </div>
+}
+else
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery(Name = "layers")] private string? LinkLayers { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] private string? LinkView { get; set; }
+    [SupplyParameterFromQuery(Name = "item")] private int? LinkItem { get; set; }
+    [SupplyParameterFromQuery(Name = "placeOrder")] private int? PlaceOrderId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private MapView? _map;
+    private bool _loaded;
+    private ElementReference _canvas;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _viewer;
+    private DotNetObjectReference<Viewer>? _selfReference;
+    private bool _canEdit;
+    private string? _itemSearch;
+    private bool _reviewOnly;
+    private bool _placing;
+    private bool _moveMode;
+    private (MapLayerView Layer, MapLegendEntryView Entry)? _placingEntry;
+    private OrderView? _placingOrder;
+    private bool _missingLayers;
+    private bool _exporting;
+    private bool _linkCopied;
+    private string? _shareLink;
+    private MapFeatureView? _selected;
+    private readonly Stack<(int Id, double X, double Y)> _undo = new();
+
+    /// <summary>One press of an arrow button, as a share of the map.</summary>
+    private const double NudgeStep = .002;
+
+    private string MoveStatus => _selected is null
+        ? "Select an item on the map or in the list below."
+        : $"Moving {_selected.Label ?? "(no name)"}. Drag it, click where it belongs, or use the arrows.";
+    private readonly Dictionary<int, bool> _visibility = [];
+
+    /// <summary>Markers on the layers this user can see. Room labels are left out: there are many, and they're on the map.</summary>
+    private IEnumerable<MapFeatureView> AllItems => _map?.Layers.SelectMany(l => l.Features).Where(f => f.Type == nameof(MapFeatureType.Marker)) ?? [];
+
+    private int ReviewCount => AllItems.Count(f => f.NeedsReview);
+
+    private IEnumerable<MapFeatureView> VisibleItems => AllItems
+        .Where(f => !_reviewOnly || f.NeedsReview)
+        .Where(f => string.IsNullOrWhiteSpace(_itemSearch) || (f.Label?.Contains(_itemSearch.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderByDescending(f => f.NeedsReview).ThenBy(f => f.Label);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthState).User;
+        _map = await Maps.GetAsync(Id, user);
+        _canEdit = (await Authorization.AuthorizeAsync(user, Policies.CanEdit)).Succeeded;
+        _loaded = true;
+
+        // A shared link sets which layers start switched on. Layers this user can't see aren't on the map at all.
+        if (_map is not null && MapViewLink.ParseLayers(LinkLayers) is { } linked)
+        {
+            foreach (var layer in _map.Layers) _visibility[layer.Id] = linked.Contains(layer.Id);
+            _missingLayers = linked.Except(_map.Layers.Select(l => l.Id)).Any();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_map is null || _viewer is not null) return;
+
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/sitemap.js");
+        _selfReference = DotNetObjectReference.Create(this);
+        _viewer = await _module.InvokeAsync<IJSObjectReference>("create", _canvas, $"map-files/{_map.Id}/base", _map.ImageWidth, _map.ImageHeight, _map.Layers.Select(l => l with { VisibleByDefault = IsVisible(l) }).ToList(), $"Map of {_map.SiteName}: {_map.Name}", _selfReference);
+        if (MapViewLink.ParseArea(LinkView) is { } area)
+        {
+            await _viewer.InvokeVoidAsync("showArea", area.Left, area.Top, area.Right, area.Bottom);
+        }
+
+        // Arriving from an order, either to show its pin or to place one.
+        if (LinkItem is { } itemId && AllItems.Any(f => f.Id == itemId)) await _viewer.InvokeVoidAsync("focusFeature", itemId);
+        if (PlaceOrderId is { } orderId && _canEdit)
+        {
+            var order = await OrderRecords.GetAsync(orderId, (await AuthState).User);
+            if (order is not null)
+            {
+                await SetPlacing(true);
+                _placingOrder = order;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task<MapArea> CurrentAreaAsync()
+    {
+        var view = await _viewer!.InvokeAsync<double[]>("viewArea");
+        return MapArea.Create(view[0], view[1], view[2], view[3]) ?? MapArea.Whole;
+    }
+
+    private async Task CopyLink()
+    {
+        if (_viewer is null || _module is null) return;
+        var link = MapViewLink.Build(_map!.Id, _map.Layers.Where(IsVisible).Select(l => l.Id), await CurrentAreaAsync());
+        _shareLink = Nav.ToAbsoluteUri(link).ToString();
+        _linkCopied = await _module.InvokeAsync<bool>("copyText", _shareLink);
+    }
+
+    private async Task SavePdf()
+    {
+        if (_viewer is null || _module is null) return;
+        _exporting = true;
+        StateHasChanged();
+        try
+        {
+            var area = await CurrentAreaAsync();
+            var date = await _module.InvokeAsync<string>("localDate");
+            var layers = _map!.Layers.Where(IsVisible).Select(l => l.Id).ToHashSet();
+            var pdf = await Exports.CreatePdfAsync(_map.Id, layers, area, date, (await AuthState).User);
+            if (pdf is null)
+            {
+                Snackbar.Add("You no longer have access to this map.", Severity.Error);
+                return;
+            }
+            using var content = new DotNetStreamReference(new MemoryStream(pdf.Content));
+            await _module.InvokeVoidAsync("downloadFile", pdf.FileName, content);
+        }
+        catch (MapFileException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+
+    /// <summary>Called when a marker is clicked on the map.</summary>
+    [JSInvokable]
+    public async Task MarkerClicked(int featureId)
+    {
+        var item = AllItems.FirstOrDefault(f => f.Id == featureId);
+        if (item is not null) await OpenOrSelect(item);
+    }
+
+    private async Task ItemClicked(MapFeatureView item)
+    {
+        // Focusing shows the item's layer, so keep the checkbox and shared links in step.
+        var layer = _map?.Layers.FirstOrDefault(l => l.Features.Any(f => f.Id == item.Id));
+        if (layer is not null && !IsVisible(layer)) await SetVisible(layer, true);
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("focusFeature", item.Id);
+        await OpenOrSelect(item);
+    }
+
+    private async Task OpenOrSelect(MapFeatureView item)
+    {
+        if (_placing) return;
+        if (_canEdit && _moveMode) await SelectItem(item);
+        else if (item.OrderId is { } orderId) await ShowOrderPin(item, orderId);
+        // People who can't edit can still read an item's notes and photos, if it has any.
+        else if (_canEdit || item.PhotoCount > 0 || !string.IsNullOrEmpty(item.Description)) await EditItem(item);
+    }
+
+    private async Task SetPlacing(bool placing)
+    {
+        if (placing && _moveMode) await SetMoveMode(false);
+        _placing = placing;
+        if (!placing)
+        {
+            _placingEntry = null;
+            _placingOrder = null;
+        }
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("setPlacing", placing);
+        StateHasChanged();
+    }
+
+    private string PlacingMessage => _placingOrder is not null ? $"Click the spot on the map for {_placingOrder.Item}."
+        : _placingEntry is { } target ? $"Click the spot on the map for the new {target.Entry.Name}."
+        : "Click the spot on the map for this photo or note.";
+
+    private async Task ShowOrderPin(MapFeatureView item, int orderId)
+    {
+        var user = (await AuthState).User;
+        var order = await OrderRecords.GetAsync(orderId, user);
+        if (order is null) return;
+        var parameters = new DialogParameters<MapOrderPinDialog> { { d => d.Order, order } };
+        var dialog = await Dialogs.ShowAsync<MapOrderPinDialog>(order.Item, parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is not { Canceled: false }) return;
+
+        await OrderRecords.RemoveFromMapAsync(orderId, user);
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("removeFeature", item.Id);
+        ReplaceItem(AllItems.FirstOrDefault(f => f.Id == item.Id) ?? item, null);
+        StateHasChanged();
+    }
+
+    private async Task StartPlacing(MapLayerView layer, MapLegendEntryView entry)
+    {
+        await SetPlacing(true);
+        _placingEntry = (layer, entry);
+    }
+
+    private MapLegendEntryView? LegendEntryOf(MapFeatureView item) => item.LegendEntryId is null ? null
+        : _map?.Layers.SelectMany(l => l.Legend ?? []).FirstOrDefault(e => e.Id == item.LegendEntryId);
+
+    private async Task AddLayer()
+    {
+        var parameters = new DialogParameters<MapLayerDialog>
+        {
+            { d => d.OnSave, async edit =>
+                {
+                    try
+                    {
+                        var layer = await CustomLayers.CreateLayerAsync(_map!.Id, edit.Name ?? "", edit.Legend, (await AuthState).User);
+                        _map = _map with { Layers = [.. _map.Layers, layer] };
+                        if (_viewer is not null) await _viewer.InvokeVoidAsync("addLayer", layer.Id);
+                        StateHasChanged();
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        await Dialogs.ShowAsync<MapLayerDialog>("Add a layer", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+    }
+
+    private async Task EditLayer(MapLayerView layer)
+    {
+        var parameters = new DialogParameters<MapLayerDialog>
+        {
+            { d => d.Layer, layer },
+            { d => d.OnSave, async edit =>
+                {
+                    try
+                    {
+                        var updated = await CustomLayers.UpdateLayerAsync(layer.Id, edit.Name ?? "", edit.Legend, (await AuthState).User);
+                        _map = _map! with { Layers = _map.Layers.Select(l => l.Id == layer.Id ? l with { Name = updated.Name, Color = updated.Color, Legend = updated.Legend } : l).ToList() };
+                        if (_viewer is not null) await _viewer.InvokeVoidAsync("updateLayerLegend", layer.Id, updated.Legend);
+                        StateHasChanged();
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<MapLayerDialog>("Edit layer", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is not { Canceled: false, Data: MapLayerEdit { Delete: true } }) return;
+
+        var current = _map!.Layers.FirstOrDefault(l => l.Id == layer.Id) ?? layer;
+        var photos = current.Features.Sum(f => f.PhotoCount);
+        var contents = current.Features.Count == 0 ? "It has no items."
+            : $"This also deletes its {current.Features.Count} item{(current.Features.Count == 1 ? "" : "s")}{(photos > 0 ? $" and {photos} photo{(photos == 1 ? "" : "s")}" : "")}. This can't be undone.";
+        if (!await Dialogs.ConfirmAsync($"Delete {current.Name}?", contents, "Delete layer", danger: true)) return;
+
+        try
+        {
+            await CustomLayers.DeleteLayerAsync(layer.Id, (await AuthState).User);
+            _map = _map with { Layers = _map.Layers.Where(l => l.Id != layer.Id).ToList() };
+            _visibility.Remove(layer.Id);
+            if (_selected is not null && current.Features.Any(f => f.Id == _selected.Id)) _selected = null;
+            if (_viewer is not null) await _viewer.InvokeVoidAsync("removeLayer", layer.Id);
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Deleted), Severity.Info);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task PlaceAtCenter()
+    {
+        if (_viewer is null) return;
+        var center = await _viewer.InvokeAsync<double[]>("viewCenter");
+        await PlaceNewPin(center[0], center[1]);
+    }
+
+    /// <summary>Called when the map is clicked while placing a new photo or note.</summary>
+    [JSInvokable]
+    public async Task PlaceNewPin(double x, double y)
+    {
+        var pending = _placingEntry;
+        var pendingOrder = _placingOrder;
+        await SetPlacing(false);
+        try
+        {
+            var user = (await AuthState).User;
+            var (layer, feature) = pendingOrder is not null
+                ? await OrderRecords.PlaceOnMapAsync(pendingOrder.Id, _map!.Id, x, y, user)
+                : pending is { } target
+                    ? await CustomLayers.AddItemAsync(target.Layer.Id, target.Entry.Id, x, y, user)
+                    : await Photos.CreatePinAsync(_map!.Id, x, y, user);
+            _map = _map! with
+            {
+                Layers = _map.Layers.Any(l => l.Id == layer.Id)
+                    ? _map.Layers.Select(l => l.Id == layer.Id ? l with { Features = [.. l.Features, feature] } : l).ToList()
+                    : [.. _map.Layers, layer with { Features = [feature] }]
+            };
+            if (_viewer is not null) await _viewer.InvokeVoidAsync("addFeature", feature, layer);
+            // The new pin has to be visible, even if this layer was switched off.
+            var pinLayer = _map!.Layers.First(l => l.Id == layer.Id);
+            if (!IsVisible(pinLayer)) await SetVisible(pinLayer, true);
+            StateHasChanged();
+            if (feature.OrderId is null) await EditItem(feature, isNew: true);
+            else Snackbar.Add("Pinned. Its progress now shows here.", Severity.Success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task SetMoveMode(bool enabled)
+    {
+        _moveMode = enabled;
+        if (_viewer is null) return;
+        await _viewer.InvokeVoidAsync("setMoveMode", enabled);
+        if (!enabled)
+        {
+            _selected = null;
+            _undo.Clear();
+            await _viewer.InvokeVoidAsync("selectFeature", (int?)null);
+        }
+    }
+
+    private async Task SelectItem(MapFeatureView item)
+    {
+        _selected = item;
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("selectFeature", item.Id);
+        StateHasChanged();
+    }
+
+    /// <summary>Called when a marker has been dragged to a new spot.</summary>
+    [JSInvokable]
+    public async Task MarkerMoved(int featureId, double x, double y)
+    {
+        var item = AllItems.FirstOrDefault(f => f.Id == featureId);
+        if (item is null) return;
+        await SelectItem(item);
+        await MoveTo(item, x, y, remember: true);
+    }
+
+    /// <summary>Called when the map is clicked while an item is selected.</summary>
+    [JSInvokable]
+    public async Task PlaceSelected(double x, double y)
+    {
+        if (_selected is not null) await MoveTo(_selected, x, y, remember: true);
+    }
+
+    private async Task Nudge(int across, int down)
+    {
+        if (_selected is null || _map is null) return;
+
+        // The same distance either way, even though map coordinates aren't square.
+        var longest = (double)Math.Max(_map.ImageWidth, _map.ImageHeight);
+        await MoveTo(_selected, _selected.X + across * NudgeStep * longest / _map.ImageWidth, _selected.Y + down * NudgeStep * longest / _map.ImageHeight, remember: true);
+    }
+
+    private async Task Undo()
+    {
+        if (!_undo.TryPop(out var last)) return;
+        var item = AllItems.FirstOrDefault(f => f.Id == last.Id);
+        if (item is not null) await MoveTo(item, last.X, last.Y, remember: false);
+    }
+
+    private async Task MoveTo(MapFeatureView item, double x, double y, bool remember)
+    {
+        (x, y) = (Math.Clamp(x, 0, 1), Math.Clamp(y, 0, 1));
+        try
+        {
+            var notes = await Maps.MoveFeatureAsync(_map!.Id, item.Id, x, y, (await AuthState).User);
+            if (remember) _undo.Push((item.Id, item.X, item.Y));
+            var moved = item with { X = x, Y = y, Notes = notes };
+            ReplaceItem(item, moved);
+            if (_selected?.Id == item.Id) _selected = moved;
+            if (_viewer is not null) await _viewer.InvokeVoidAsync("moveFeature", item.Id, x, y);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Put the marker back where the server says it is.
+            if (_viewer is not null) await _viewer.InvokeVoidAsync("moveFeature", item.Id, item.X, item.Y);
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private async Task EditItem(MapFeatureView item, bool isNew = false)
+    {
+        var parameters = new DialogParameters<MapFeatureDialog>
+        {
+            { d => d.FeatureId, item.Id },
+            { d => d.Name, item.Label },
+            { d => d.Description, item.Description },
+            { d => d.Reason, item.NeedsReview ? item.Notes : null },
+            { d => d.CanEdit, _canEdit },
+            { d => d.CanDelete, _canEdit },
+        };
+        var title = !_canEdit ? item.Label ?? "Item" : isNew ? (item.Symbol == MapSymbols.PhotoPin ? "Add a photo or note" : "Add an item") : "Edit item";
+        var dialog = await Dialogs.ShowAsync<MapFeatureDialog>(title, parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+
+        // Photos save as they're added, so the count can change even if the dialog is cancelled.
+        var count = await Photos.CountForFeatureAsync(item.Id);
+        var latest = AllItems.FirstOrDefault(f => f.Id == item.Id) ?? item;
+        if (result is not { Canceled: false, Data: MapFeatureEdit edit })
+        {
+            // A new pin that was cancelled with nothing added isn't wanted.
+            if (isNew && count == 0)
+            {
+                await Maps.DeleteFeatureAsync(item.Id);
+                if (_viewer is not null) await _viewer.InvokeVoidAsync("removeFeature", item.Id);
+                ReplaceItem(latest, null);
+            }
+            else if (count != latest.PhotoCount)
+            {
+                ReplaceItem(latest, latest with { PhotoCount = count });
+                if (_viewer is not null) await _viewer.InvokeVoidAsync("setFeatureDetails", item.Id, count, !string.IsNullOrEmpty(latest.Description));
+            }
+            StateHasChanged();
+            return;
+        }
+        item = latest with { PhotoCount = count };
+
+        try
+        {
+            if (edit.Delete)
+            {
+                if ((count > 0 || !string.IsNullOrEmpty(item.Description)) && !await Dialogs.ConfirmAsync(
+                        "Delete this item?",
+                        count > 0 ? $"This also deletes its {count} photo{(count == 1 ? "" : "s")} and any notes. This can't be undone." : "This also deletes its notes. This can't be undone.",
+                        "Delete", danger: true))
+                {
+                    ReplaceItem(latest, item);
+                    if (_viewer is not null) await _viewer.InvokeVoidAsync("setFeatureDetails", item.Id, count, !string.IsNullOrEmpty(item.Description));
+                    return;
+                }
+                await Maps.DeleteFeatureAsync(item.Id);
+                if (_viewer is not null) await _viewer.InvokeVoidAsync("removeFeature", item.Id);
+                ReplaceItem(latest, null);
+                if (_selected?.Id == item.Id) _selected = null;
+                Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Deleted), Severity.Info);
+            }
+            else
+            {
+                await Maps.UpdateFeatureAsync(item.Id, edit.Name, edit.Description);
+                var updated = item with { Label = string.IsNullOrWhiteSpace(edit.Name) ? null : edit.Name.Trim(), Description = string.IsNullOrWhiteSpace(edit.Description) ? null : edit.Description.Trim(), NeedsReview = false };
+                if (_viewer is not null)
+                {
+                    await _viewer.InvokeVoidAsync("updateFeature", item.Id, updated.Label, updated.NeedsReview);
+                    await _viewer.InvokeVoidAsync("setFeatureDetails", item.Id, count, !string.IsNullOrEmpty(updated.Description));
+                }
+                ReplaceItem(latest, updated);
+                Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private void ReplaceItem(MapFeatureView oldItem, MapFeatureView? newItem)
+    {
+        _map = _map! with
+        {
+            Layers = _map.Layers.Select(l => l.Features.Contains(oldItem)
+                ? l with { Features = newItem is null ? l.Features.Where(f => f != oldItem).ToList() : l.Features.Select(f => f == oldItem ? newItem : f).ToList() }
+                : l).ToList()
+        };
+    }
+
+    private bool IsVisible(MapLayerView layer) => _visibility.GetValueOrDefault(layer.Id, layer.VisibleByDefault);
+
+    private async Task SetVisible(MapLayerView layer, bool visible)
+    {
+        _visibility[layer.Id] = visible;
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("setLayerVisible", layer.Id, visible);
+    }
+
+    private async Task ResetView()
+    {
+        if (_viewer is not null) await _viewer.InvokeVoidAsync("resetView");
+    }
+
+    private async Task SetLayerRole(MapLayerView layer, string role)
+    {
+        await Maps.SetLayerRoleAsync(layer.Id, role);
+        _map = _map! with { Layers = _map.Layers.Select(l => l.Id == layer.Id ? l with { MinimumRole = role } : l).ToList() };
+        Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+    }
+
+    private async Task SetMapRole(string role)
+    {
+        await Maps.SetMapRoleAsync(_map!.Id, role);
+        _map = _map with { MinimumRole = role };
+        Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+    }
+
+    private static string LegendName(string symbol) => MapSymbols.DisplayName(symbol);
+
+    private static string LegendClass(string symbol) => symbol switch
+    {
+        MapSymbols.IndoorAccessPoint => "legend-ap-indoor",
+        MapSymbols.OutdoorAccessPoint or MapSymbols.OutdoorAccessPoint577 => "legend-ap-outdoor",
+        MapSymbols.Mdf => "legend-mdf",
+        MapSymbols.Idf => "legend-idf",
+        MapSymbols.PhotoPin => "legend-photo",
+        MapSymbols.OrderPin => "legend-order",
+        _ => "",
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_viewer is not null)
+            {
+                await _viewer.InvokeVoidAsync("destroy");
+                await _viewer.DisposeAsync();
+            }
+            if (_module is not null) await _module.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone, so there's nothing left to clean up.
+        }
+        _selfReference?.Dispose();
+    }
+}

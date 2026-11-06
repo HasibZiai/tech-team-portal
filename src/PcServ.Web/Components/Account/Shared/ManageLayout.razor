@@ -1,0 +1,15 @@
+﻿@inherits LayoutComponentBase
+@layout AccountLayout
+
+<div class="account-card wide">
+    <h1 class="h3 mb-1">My account</h1>
+    <p class="text-secondary mb-4">Change your password and sign-in settings.</p>
+    <div class="row g-4">
+        <div class="col-lg-3">
+            <ManageNavMenu />
+        </div>
+        <div class="col-lg-9">
+            @Body
+        </div>
+    </div>
+</div>

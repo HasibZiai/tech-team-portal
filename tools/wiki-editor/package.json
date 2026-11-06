@@ -1,0 +1,17 @@
+{
+  "name": "pcserv-wiki-editor",
+  "private": true,
+  "description": "Builds the wiki's editor into one file. Only needed when changing the editor: the result is committed.",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --format=esm --minify --legal-comments=linked --outfile=../../src/PcServ.Web/wwwroot/lib/tiptap/wiki-editor.js"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.33.0",
+    "@tiptap/extension-image": "3.33.0",
+    "@tiptap/extension-table": "3.33.0",
+    "@tiptap/extensions": "3.33.0",
+    "@tiptap/pm": "3.33.0",
+    "@tiptap/starter-kit": "3.33.0",
+    "esbuild": "0.28.2"
+  }
+}

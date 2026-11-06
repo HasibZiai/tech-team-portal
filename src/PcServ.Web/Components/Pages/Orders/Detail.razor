@@ -1,0 +1,245 @@
+@page "/orders/{Id:int}"
+@attribute [Authorize(Policy = Policies.CanEdit)]
+@inject OrderService Orders
+@inject VendorService VendorList
+@inject AppDbFactory DbFactory
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+
+<PageTitle>@(_order?.Item ?? "Order") · Tech Team Portal</PageTitle>
+
+@if (_loaded && _order is null)
+{
+    <EmptyState Title="Order not found" Icon="@Icons.Material.Outlined.LocalShipping">
+        <MudButton Href="orders" Variant="Variant.Filled" Color="Color.Primary">Back to orders</MudButton>
+    </EmptyState>
+}
+else if (_order is not null)
+{
+    <MudButton Href="orders" Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowBack" Class="mb-2">All orders</MudButton>
+    <PageHeader Title="@(_order.Quantity > 1 ? $"{_order.Item} × {_order.Quantity}" : _order.Item)" Subtitle="@_order.SiteName">
+        <Actions>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Edit" OnClick="Edit">Edit details</MudButton>
+        </Actions>
+    </PageHeader>
+
+    <MudPaper Outlined="true" Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Progress</MudText>
+        <ol class="order-stages">
+            @foreach (var stage in OrderStages.Path)
+            {
+                var reached = StageDate(stage);
+                var current = stage == _order.Status;
+                <li class="@(current ? "order-stage-current" : reached is not null ? "order-stage-done" : "")" aria-current="@(current ? "step" : null)">
+                    <span class="order-stage-mark" aria-hidden="true">@(reached is not null ? "✓" : "")</span>
+                    <span class="order-stage-name">@OrderStages.Name(stage, ContactFor(stage))</span>
+                    <span class="order-stage-date">@(reached?.ToString("MMM d, yyyy") ?? "Not yet")</span>
+                </li>
+            }
+        </ol>
+        @if (_order.Status == OrderStatus.Cancelled)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-3">Cancelled on @_order.StatusDate.ToString("MMM d, yyyy").</MudAlert>
+        }
+        <div class="d-flex flex-wrap gap-2 mt-3">
+            @if (OrderStages.Next(_order.Status) is { } next)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => ChangeStage(next)">Mark as @OrderStages.Name(next, _order.Contact)</MudButton>
+            }
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="() => ChangeStage(OrderStages.Next(_order.Status) ?? OrderStatus.Requested)">Choose another stage</MudButton>
+        </div>
+    </MudPaper>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-4 h-100">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Details</MudText>
+                <dl class="order-details">
+                    <dt>For</dt><dd>@(_order.RequestedFor ?? "Not given")</dd>
+                    <dt>Room</dt><dd>@(_order.Room ?? "Not given")</dd>
+                    <dt>Vendor</dt>
+                    <dd>
+                        @if (_order.VendorWebsite is not null)
+                        {
+                            <MudLink Href="@_order.VendorWebsite" Target="_blank" rel="noopener noreferrer" Underline="Underline.Always">@_order.VendorName</MudLink>
+                        }
+                        else
+                        {
+                            @_order.VendorName
+                        }
+                        @if (_order.IsOtherVendor)
+                        {
+                            <span> (not on the approved list)</span>
+                        }
+                    </dd>
+                    <dt>Contact</dt><dd>@(_order.Contact ?? "Not given")</dd>
+                    <dt>Quote or PO number</dt><dd>@(_order.QuoteNumber ?? "None yet")</dd>
+                    <dt>Tracking number</dt><dd>@(_order.TrackingNumber ?? "None yet")</dd>
+                </dl>
+                @if (!string.IsNullOrEmpty(_order.Notes))
+                {
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h3" Class="mt-3">Notes</MudText>
+                    <MudText Class="pre-line">@_order.Notes</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-4 mb-3">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">On the site map</MudText>
+                @if (_order.MapId is { } mapId)
+                {
+                    <MudText Class="mb-2">Pinned on @_order.MapName.@(OrderStages.IsOpen(_order.Status) ? "" : " It's hidden from the map now that this order is finished.")</MudText>
+                    <div class="d-flex flex-wrap gap-2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Href="@($"maps/{mapId}?item={_order.MapFeatureId}")" StartIcon="@Icons.Material.Outlined.Map">Open map</MudButton>
+                        <MudButton Variant="Variant.Text" OnClick="RemovePin">Remove pin</MudButton>
+                    </div>
+                }
+                else if (!OrderStages.IsOpen(_order.Status))
+                {
+                    <MudText>Finished orders don't show on maps.</MudText>
+                }
+                else if (_maps.Count == 0)
+                {
+                    <MudText>This site doesn't have a map yet.</MudText>
+                }
+                else
+                {
+                    <MudText Class="mb-2">Pin this order to the room it's for, so its progress shows on the map.</MudText>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var (id, name) in _maps)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" Href="@($"maps/{id}?placeOrder={_order.Id}")" StartIcon="@Icons.Material.Outlined.PinDrop">Pin on @name</MudButton>
+                        }
+                    </div>
+                }
+            </MudPaper>
+            <MudPaper Outlined="true" Class="pa-4">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">History</MudText>
+                <ul class="order-history">
+                    @foreach (var entry in _order.History)
+                    {
+                        <li>
+                            <strong>@OrderStages.Name(entry.Status, entry.Contact)</strong>, @entry.Date.ToString("MMM d, yyyy")
+                            <span class="order-history-by">by @entry.By</span>
+                            @if (!string.IsNullOrEmpty(entry.Note))
+                            {
+                                <div class="pre-line">@entry.Note</div>
+                            }
+                        </li>
+                    }
+                </ul>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+else
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private OrderView? _order;
+    private List<(int Id, string Name)> _maps = [];
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        var user = (await AuthState).User;
+        _order = await Orders.GetAsync(Id, user);
+        _maps = _order is null ? [] : await Orders.MapsForSiteAsync(_order.SiteId, user);
+        _loaded = true;
+    }
+
+    /// <summary>When this stage was last reached, unless the order has since gone back before it.</summary>
+    private DateOnly? StageDate(OrderStatus stage)
+    {
+        if (_order is null) return null;
+        var position = _order.Status == OrderStatus.Cancelled ? int.MaxValue : OrderStages.Path.ToList().IndexOf(_order.Status);
+        if (OrderStages.Path.ToList().IndexOf(stage) > position) return null;
+        var latest = _order.History.FirstOrDefault(h => h.Status == stage);
+        return latest?.Date;
+    }
+
+    /// <summary>Who the sent stage went to: the name recorded when it happened, or else the order's current contact.</summary>
+    private string? ContactFor(OrderStatus stage) =>
+        _order?.History.FirstOrDefault(h => h.Status == stage)?.Contact ?? _order?.Contact;
+
+    private async Task Edit()
+    {
+        var user = (await AuthState).User;
+        List<Site> sites;
+        await using (var db = await DbFactory.CreateAsync())
+        {
+            sites = await db.Sites.AsNoTracking().Where(s => s.IsActive || s.Id == _order!.SiteId).OrderBy(s => s.SortOrder).ThenBy(s => s.Name).ToListAsync();
+        }
+        var vendors = (await VendorList.ListAsync()).Where(v => v.IsApproved || v.Id == _order!.VendorId).ToList();
+        var parameters = new DialogParameters<OrderDialog>
+        {
+            { d => d.Order, _order },
+            { d => d.Sites, sites },
+            { d => d.Vendors, vendors },
+            { d => d.OnSave, async edit =>
+                {
+                    try
+                    {
+                        await Orders.UpdateAsync(Id, edit, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<OrderDialog>("Edit order", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            await Reload();
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+    }
+
+    private async Task ChangeStage(OrderStatus suggested)
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<OrderStatusDialog>
+        {
+            { d => d.Current, _order!.Status },
+            { d => d.Suggested, suggested },
+            { d => d.SiteId, _order.SiteId },
+            { d => d.Contact, _order.Contact },
+            { d => d.OnSave, async (status, date, note, contact) =>
+                {
+                    try
+                    {
+                        await Orders.SetStatusAsync(Id, status, date, note, user, contact);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<OrderStatusDialog>("Update stage", parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            await Reload();
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+    }
+
+    private async Task RemovePin()
+    {
+        await Orders.RemoveFromMapAsync(Id, (await AuthState).User);
+        await Reload();
+    }
+}

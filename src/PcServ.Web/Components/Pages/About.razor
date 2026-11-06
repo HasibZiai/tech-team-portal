@@ -1,0 +1,69 @@
+@page "/about"
+@using System.Reflection
+@inject SettingsService Settings
+
+<PageTitle>About · Tech Team Portal</PageTitle>
+
+<PageHeader Title="About" />
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="7">
+        <MudPaper Outlined="true" Class="pa-6">
+            <div class="d-flex align-center gap-3">
+                <span class="brand-mark large" aria-hidden="true"></span>
+                <div>
+                    <MudText Typo="Typo.h5" HtmlTag="h2">Tech Team Portal</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Version @Version · for @_orgName</MudText>
+                </div>
+            </div>
+
+            <MudText Class="mt-4">
+                A self-hosted toolkit for school IT teams, bringing together links, site information,
+                site maps, order tracking, Chromebook repairs and a team wiki.
+            </MudText>
+
+            <MudDivider Class="my-4" />
+
+            <MudText Typo="Typo.subtitle2">Designed and built by</MudText>
+            <MudText Typo="Typo.h6" HtmlTag="p">Hasib</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">© @DateTime.Now.Year Hasib. Released under the MIT License.</MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="5">
+        <MudPaper Outlined="true" Class="pa-6">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Built with</MudText>
+            <MudList T="string" Dense="true" ReadOnly="true">
+                <MudListItem T="string" Icon="@Icons.Material.Outlined.Code">.NET 10 & ASP.NET Core Blazor</MudListItem>
+                <MudListItem T="string" Icon="@Icons.Material.Outlined.Palette">MudBlazor components</MudListItem>
+                <MudListItem T="string" Icon="@Icons.Material.Outlined.Storage">SQLite with Entity Framework Core</MudListItem>
+                <MudListItem T="string" Icon="@Icons.Material.Outlined.Lock">Local accounts with optional two-factor sign-in</MudListItem>
+            </MudList>
+
+            @if (_personality)
+            {
+                <MudDivider Class="my-4" />
+                <MudText Typo="Typo.subtitle2">A note from the Personality Core</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1 personality-note">
+                    "This portal was built for the good of all of us. Except the ones with broken Chromebooks.
+                    They have been placed in the repair queue, where they will be helped. Eventually.
+                    And yes, the cake is a lie."
+                </MudText>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private bool _personality;
+    private string? _orgName;
+
+    private static string Version =>
+        typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "1.0.0";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _personality = await Settings.IsPersonalityEnabledAsync();
+        _orgName = await Settings.GetAsync(SettingKeys.OrganizationName);
+    }
+}

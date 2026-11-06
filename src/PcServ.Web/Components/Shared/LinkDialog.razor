@@ -1,0 +1,54 @@
+<MudDialog>
+    <DialogContent>
+        <EditForm id="link-form" Model="_model" OnValidSubmit="Submit">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_model.Title" For="() => _model.Title" Label="Title" Variant="Variant.Outlined" AutoFocus="true" Immediate="true" />
+                <MudTextField @bind-Value="_model.Url" For="() => _model.Url" Label="Web address" Placeholder="https://..." Variant="Variant.Outlined"
+                              HelperText="Paste the full address. https:// is added if you leave it off." OnBlur="FixUrl" />
+                <MudTextField @bind-Value="_model.Description" For="() => _model.Description" Label="Short description (optional)" Variant="Variant.Outlined" Lines="2" />
+                <MudSelect T="int" @bind-Value="_model.CategoryId" Label="Category" Variant="Variant.Outlined">
+                    @foreach (var c in Categories)
+                    {
+                        <MudSelectItem T="int" Value="c.Id">@c.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSwitch T="bool" @bind-Value="_model.IsPinned" Color="Color.Secondary" Label="Pin to the Overview page" />
+                <MudNumericField T="int" @bind-Value="_model.SortOrder" Label="Position in list" Variant="Variant.Outlined" Min="0"
+                                 HelperText="Lower numbers show first. Leave as-is if you don't care." />
+            </MudStack>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="link-form" Variant="Variant.Filled" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public LinkItem Model { get; set; } = new();
+    [Parameter] public IReadOnlyList<LinkCategory> Categories { get; set; } = [];
+
+    private LinkItem _model = new();
+
+    protected override void OnInitialized()
+    {
+        _model = Model.Copy<LinkItem>();
+        if (_model.CategoryId == 0 && Categories.Count > 0) _model.CategoryId = Categories[0].Id;
+    }
+
+    private void FixUrl()
+    {
+        var url = _model.Url?.Trim() ?? "";
+        if (url.Length > 0 && !url.Contains("://")) url = "https://" + url;
+        _model.Url = url;
+    }
+
+    private void Submit()
+    {
+        FixUrl();
+        MudDialog.Close(DialogResult.Ok(_model));
+    }
+}

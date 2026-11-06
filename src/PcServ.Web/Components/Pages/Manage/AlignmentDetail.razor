@@ -1,0 +1,199 @@
+@page "/manage/alignments/{Id:int}"
+@using PcServ.Web.Services.Maps
+@implements IAsyncDisposable
+@inject MapLinkService Links
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Navigation
+@inject SettingsService AppSettings
+
+<PageTitle>Check alignment · Tech Team Portal</PageTitle>
+
+@if (_loaded && _link is null)
+{
+    <EmptyState Title="Alignment not found" Icon="@Icons.Material.Outlined.Layers">
+        <MudButton Href="manage/alignments" Variant="Variant.Filled" Color="Color.Primary">Back to alignments</MudButton>
+    </EmptyState>
+}
+else if (_link is not null)
+{
+    <MudButton Href="manage/alignments" Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowBack" Class="mb-2">All alignments</MudButton>
+    <PageHeader Title="@($"{_link.SiteName}: {_link.TargetName}")" Subtitle="@($"Layers from {_link.SourceName}")">
+        <Actions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Check" Disabled="@(_link.Status == MapLinkStatus.Confirmed)" OnClick="Confirm">
+                @(_link.Status == MapLinkStatus.Confirmed ? "Confirmed" : "Confirm: it lines up")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Outlined.Delete" OnClick="Remove">Remove</MudButton>
+        </Actions>
+    </PageHeader>
+
+    <MudText Typo="Typo.body1" Class="mb-2">
+        The plan is in grey and the Wi-Fi map's lines are in red. Where they line up, red sits right on the grey. Zoom in on the buildings to check, especially portables, which may be drawn in a different spot.
+    </MudText>
+    <div class="map-canvas align-preview" @ref="_preview" aria-label="@($"Red lines of {_link.SourceName} over grey lines of {_link.TargetName}")"></div>
+
+    <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-5">Doesn't line up? Click matching points</MudText>
+    <MudText Typo="Typo.body1" Class="mb-2">
+        Click a spot on the Wi-Fi map, then the same spot on the plan. Do this at least twice, using spots far apart, such as opposite corners of the main buildings. More points give a better fit.
+    </MudText>
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+        <span role="status">@PointPrompt</span>
+    </MudAlert>
+    <div class="align-panes">
+        <div>
+            <MudText Typo="Typo.subtitle1" HtmlTag="h3">@_link.SourceName</MudText>
+            <div class="map-canvas align-pane" @ref="_sourcePane"></div>
+        </div>
+        <div>
+            <MudText Typo="Typo.subtitle1" HtmlTag="h3">@_link.TargetName</MudText>
+            <div class="map-canvas align-pane" @ref="_targetPane"></div>
+        </div>
+    </div>
+    <div class="d-flex flex-wrap gap-3 mt-3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_points.Count < 2)" OnClick="UsePoints">Use these @_points.Count point(s)</MudButton>
+        <MudButton Variant="Variant.Outlined" Disabled="@(_points.Count == 0 && !_waitingForTarget)" OnClick="ClearPoints">Start over</MudButton>
+    </div>
+}
+else
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private MapLinkDetail? _link;
+    private bool _loaded;
+    private ElementReference _preview;
+    private ElementReference _sourcePane;
+    private ElementReference _targetPane;
+    private IJSObjectReference? _viewerModule;
+    private IJSObjectReference? _alignModule;
+    private IJSObjectReference? _previewViewer;
+    private IJSObjectReference? _panes;
+    private DotNetObjectReference<AlignmentDetail>? _self;
+    private readonly List<AlignmentPoint> _points = [];
+    private bool _waitingForTarget;
+    private int _version;
+
+    private string PointPrompt => _waitingForTarget
+        ? "Now click the same spot on the plan, on the right."
+        : _points.Count == 0
+            ? "Click a spot on the Wi-Fi map, on the left."
+            : $"{_points.Count} point(s) so far. Add another, or use these.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _link = await Links.GetAsync(Id);
+        _loaded = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_link is null || _panes is not null) return;
+
+        _viewerModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/sitemap.js");
+        _alignModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/mapalign.js");
+        await ShowPreviewAsync();
+
+        _self = DotNetObjectReference.Create(this);
+        _panes = await _alignModule.InvokeAsync<IJSObjectReference>("create", _sourcePane, _targetPane,
+            new { url = $"map-files/{_link.SourceMapId}/base", width = _link.SourceWidth, height = _link.SourceHeight, alt = _link.SourceName },
+            new { url = $"map-files/{_link.TargetMapId}/base", width = _link.TargetWidth, height = _link.TargetHeight, alt = _link.TargetName },
+            _self);
+    }
+
+    private async Task ShowPreviewAsync()
+    {
+        if (_previewViewer is not null)
+        {
+            await _previewViewer.InvokeVoidAsync("destroy");
+            await _previewViewer.DisposeAsync();
+        }
+
+        // The version makes the browser fetch a new picture after the alignment changes.
+        _previewViewer = await _viewerModule!.InvokeAsync<IJSObjectReference>("create", _preview,
+            $"map-links/{_link!.Id}/preview?v={_version}", _link.TargetWidth, _link.TargetHeight, Array.Empty<object>(),
+            $"Alignment preview for {_link.TargetName}", null);
+    }
+
+    [JSInvokable]
+    public void SourcePicked()
+    {
+        _waitingForTarget = true;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void PairPicked(double sourceX, double sourceY, double targetX, double targetY)
+    {
+        _points.Add(new AlignmentPoint(sourceX, sourceY, targetX, targetY));
+        _waitingForTarget = false;
+        StateHasChanged();
+    }
+
+    private async Task ClearPoints()
+    {
+        _points.Clear();
+        _waitingForTarget = false;
+        if (_panes is not null) await _panes.InvokeVoidAsync("clear");
+    }
+
+    private async Task UsePoints()
+    {
+        try
+        {
+            await Links.SetFromPointsAsync(Id, _points);
+        }
+        catch (ArgumentException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Warning);
+            return;
+        }
+
+        _link = await Links.GetAsync(Id);
+        _version++;
+        await ClearPoints();
+        await ShowPreviewAsync();
+        Snackbar.Add("New alignment made. Check the preview at the top, then confirm it if it lines up.", Severity.Info);
+    }
+
+    private async Task Confirm()
+    {
+        await Links.ConfirmAsync(Id);
+        Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        Navigation.NavigateTo("manage/alignments");
+    }
+
+    private async Task Remove()
+    {
+        if (!await Dialogs.ConfirmAsync("Remove alignment", "Remove this alignment? Network layers will stop showing on this plan, and any items placed by hand on this plan will lose those positions.", "Remove", danger: true)) return;
+        await Links.DeleteAsync(Id);
+        Navigation.NavigateTo("manage/alignments");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_previewViewer is not null)
+            {
+                await _previewViewer.InvokeVoidAsync("destroy");
+                await _previewViewer.DisposeAsync();
+            }
+            if (_panes is not null)
+            {
+                await _panes.InvokeVoidAsync("destroy");
+                await _panes.DisposeAsync();
+            }
+            if (_viewerModule is not null) await _viewerModule.DisposeAsync();
+            if (_alignModule is not null) await _alignModule.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab is already gone, so there's nothing left to clean up.
+        }
+        _self?.Dispose();
+    }
+}

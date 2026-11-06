@@ -1,0 +1,27 @@
+<MudDialog>
+    <DialogContent>
+        <EditForm id="category-form" Model="_model" OnValidSubmit="() => MudDialog.Close(DialogResult.Ok(_model))">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_model.Name" For="() => _model.Name" Label="Category name" Variant="Variant.Outlined" AutoFocus="true" />
+                <MudTextField @bind-Value="_model.Description" For="() => _model.Description" Label="Description (optional)" Variant="Variant.Outlined" />
+                <MudNumericField T="int" @bind-Value="_model.SortOrder" Label="Position on page" Variant="Variant.Outlined" Min="0"
+                                 HelperText="Lower numbers show first." />
+            </MudStack>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="category-form" Variant="Variant.Filled" Color="Color.Primary">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public LinkCategory Model { get; set; } = new();
+
+    private LinkCategory _model = new();
+
+    protected override void OnInitialized() => _model = Model.Copy<LinkCategory>();
+}

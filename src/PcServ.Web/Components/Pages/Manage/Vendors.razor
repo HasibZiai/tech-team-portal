@@ -1,0 +1,87 @@
+@page "/manage/vendors"
+@inject VendorService VendorList
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+
+<PageTitle>Approved vendors · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Approved vendors" Subtitle="The vendors people can choose when they create an order.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="() => Edit(new Vendor())">Add vendor</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_vendors is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_vendors.Count == 0)
+{
+    <EmptyState Title="No vendors yet" Icon="@Icons.Material.Outlined.Storefront">
+        <MudText Class="mb-3">Until vendors are added, people can only choose "Other" and type a name.</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => Edit(new Vendor())">Add vendor</MudButton>
+    </EmptyState>
+}
+else
+{
+    <MudTable T="Vendor" Items="_vendors" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Vendor</MudTh>
+            <MudTh>Website</MudTh>
+            <MudTh>Phone</MudTh>
+            <MudTh>Notes</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh><span class="visually-hidden">Actions</span></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Vendor">@context.Name</MudTd>
+            <MudTd DataLabel="Website">
+                @if (context.Website is not null)
+                {
+                    <MudLink Href="@context.Website" Target="_blank" rel="noopener noreferrer" Underline="Underline.Always">@context.Website</MudLink>
+                }
+            </MudTd>
+            <MudTd DataLabel="Phone">@context.Phone</MudTd>
+            <MudTd DataLabel="Notes">@context.Notes</MudTd>
+            <MudTd DataLabel="Status">@(context.IsApproved ? "Approved" : "No longer approved")</MudTd>
+            <MudTd DataLabel="Actions"><MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Edit {context.Name}")" OnClick="() => Edit(context)">Edit</MudButton></MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<Vendor>? _vendors;
+
+    protected override async Task OnInitializedAsync() => _vendors = await VendorList.ListAsync();
+
+    private async Task Edit(Vendor vendor)
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<VendorDialog>
+        {
+            { d => d.Vendor, vendor },
+            { d => d.OnSave, async model =>
+                {
+                    try
+                    {
+                        await VendorList.SaveAsync(model, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<VendorDialog>(vendor.Id == 0 ? "Add vendor" : "Edit vendor", parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            _vendors = await VendorList.ListAsync();
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+    }
+}

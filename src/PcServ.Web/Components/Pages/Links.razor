@@ -1,0 +1,185 @@
+@page "/links"
+@inherits RecordPageBase
+
+<PageTitle>Links · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Links" Subtitle="Helpful sites and tools for the team.">
+    <Actions>
+        <MudTextField @bind-Value="_search" Placeholder="Search links" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" Class="search-box" />
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="@(_editing ? Variant.Filled : Variant.Outlined)" Color="Color.Secondary"
+                       StartIcon="@(_editing ? Icons.Material.Filled.Check : Icons.Material.Outlined.Edit)"
+                       OnClick="() => _editing = !_editing">
+                @(_editing ? "Done editing" : "Edit links")
+            </MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (_editing)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4" Dense="true">
+        Edit mode is on. Use the pencil and trash icons to change things, or add a new category.
+        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="ml-3" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCategory">New category</MudButton>
+    </MudAlert>
+}
+
+@if (_categories is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_categories.Count == 0)
+{
+    <EmptyState Title="No links yet" Icon="@Icons.Material.Outlined.Link">
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCategory">Add the first category</MudButton>
+        </AuthorizeView>
+    </EmptyState>
+}
+else
+{
+    var visible = Filtered().ToList();
+    if (visible.Count == 0)
+    {
+        <MudText Color="Color.Secondary">No links match "@_search".</MudText>
+    }
+
+    @foreach (var (category, links) in visible)
+    {
+        <section class="link-section">
+            <div class="link-section-header">
+                <div>
+                    <MudText Typo="Typo.h6" HtmlTag="h2">@category.Name</MudText>
+                    @if (!string.IsNullOrEmpty(category.Description))
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@category.Description</MudText>
+                    }
+                </div>
+                @if (_editing)
+                {
+                    <div class="d-flex gap-1">
+                        <MudButton Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="() => AddLink(category)">Add link</MudButton>
+                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Edit" aria-label="Edit category" OnClick="() => EditCategory(category)" />
+                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" aria-label="Delete category" OnClick="() => DeleteCategory(category)" />
+                    </div>
+                }
+            </div>
+
+            @if (links.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">No links in this category yet.</MudText>
+            }
+
+            <MudGrid Spacing="2">
+                @foreach (var link in links)
+                {
+                    <MudItem xs="12" sm="6" lg="4">
+                        <MudPaper Outlined="true" Class="link-card">
+                            <a href="@link.Url" target="_blank" rel="noopener noreferrer" class="link-card-body">
+                                <div class="d-flex align-center gap-2">
+                                    <MudIcon Icon="@(link.IsPinned ? Icons.Material.Filled.PushPin : Icons.Material.Outlined.Public)" Size="Size.Small"
+                                             Color="@(link.IsPinned ? Color.Secondary : Color.Default)" />
+                                    <MudText Typo="Typo.subtitle1" Class="link-title">@link.Title</MudText>
+                                </div>
+                                @if (!string.IsNullOrEmpty(link.Description))
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">@link.Description</MudText>
+                                }
+                                <MudText Typo="Typo.caption" Class="link-host">@Host(link.Url)</MudText>
+                            </a>
+                            @if (_editing)
+                            {
+                                <div class="link-card-actions">
+                                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Edit" aria-label="Edit link" OnClick="() => EditLink(link)" />
+                                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" aria-label="Delete link" OnClick="() => DeleteLink(link)" />
+                                </div>
+                            }
+                        </MudPaper>
+                    </MudItem>
+                }
+            </MudGrid>
+        </section>
+    }
+}
+
+@code {
+    private List<LinkCategory>? _categories;
+    private string? _search;
+    private bool _editing;
+
+    protected override async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateAsync();
+        _categories = await db.LinkCategories.AsNoTracking()
+            .Include(c => c.Links.OrderBy(l => l.SortOrder).ThenBy(l => l.Title))
+            .OrderBy(c => c.SortOrder).ThenBy(c => c.Name)
+            .ToListAsync();
+    }
+
+    private IEnumerable<(LinkCategory Category, List<LinkItem> Links)> Filtered()
+    {
+        foreach (var c in _categories!)
+        {
+            if (string.IsNullOrWhiteSpace(_search))
+            {
+                yield return (c, c.Links);
+                continue;
+            }
+
+            var term = _search.Trim();
+            var categoryMatches = c.Name.Contains(term, StringComparison.OrdinalIgnoreCase);
+            var links = c.Links.Where(l => categoryMatches
+                || l.Title.Contains(term, StringComparison.OrdinalIgnoreCase)
+                || (l.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+                || l.Url.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (links.Count > 0) yield return (c, links);
+        }
+    }
+
+    private static string Host(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
+
+    private async Task AddCategory()
+    {
+        var next = (_categories?.Count ?? 0) == 0 ? 0 : _categories!.Max(c => c.SortOrder) + 1;
+        var edited = await Dialogs.EditAsync<CategoryDialog, LinkCategory>("New category", new LinkCategory { SortOrder = next });
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task EditCategory(LinkCategory category)
+    {
+        var edited = await Dialogs.EditAsync<CategoryDialog, LinkCategory>("Edit category", category);
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task DeleteCategory(LinkCategory category)
+    {
+        var message = category.Links.Count == 0
+            ? $"Delete the category \"{category.Name}\"?"
+            : $"Delete \"{category.Name}\" and the {category.Links.Count} link(s) in it? This can't be undone.";
+        if (!await Dialogs.ConfirmAsync("Delete category", message, "Delete", danger: true)) return;
+        await DeleteAsync<LinkCategory>(category.Id);
+    }
+
+    private async Task AddLink(LinkCategory category)
+    {
+        var next = category.Links.Count == 0 ? 0 : category.Links.Max(l => l.SortOrder) + 1;
+        await OpenLinkDialog("New link", new LinkItem { CategoryId = category.Id, SortOrder = next });
+    }
+
+    private Task EditLink(LinkItem link) => OpenLinkDialog("Edit link", link);
+
+    private async Task OpenLinkDialog(string title, LinkItem link)
+    {
+        var edited = await Dialogs.EditAsync<LinkDialog, LinkItem>(title, link,
+            new() { [nameof(LinkDialog.Categories)] = _categories!.Cast<LinkCategory>().ToList() });
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task DeleteLink(LinkItem link)
+    {
+        if (!await Dialogs.ConfirmAsync("Delete link", $"Delete \"{link.Title}\"?", "Delete", danger: true)) return;
+        await DeleteAsync<LinkItem>(link.Id);
+    }
+
+}

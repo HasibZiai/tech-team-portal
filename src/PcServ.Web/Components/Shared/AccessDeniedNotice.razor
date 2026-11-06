@@ -1,0 +1,16 @@
+@inject SettingsService Settings
+
+<PageTitle>Access denied</PageTitle>
+
+<div class="centered-notice">
+    <MudIcon Icon="@Icons.Material.Outlined.Lock" Size="Size.Large" Color="Color.Secondary" />
+    <MudText Typo="Typo.h5" HtmlTag="h1" Class="mt-3">Access denied</MudText>
+    <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mt-1">@_line</MudText>
+    <MudButton Href="" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">Back to overview</MudButton>
+</div>
+
+@code {
+    private string _line = Quips.PlainFor(QuipMoment.AccessDenied);
+
+    protected override async Task OnInitializedAsync() => _line = await Settings.QuipAsync(QuipMoment.AccessDenied);
+}

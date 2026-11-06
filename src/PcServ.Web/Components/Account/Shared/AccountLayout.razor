@@ -1,0 +1,27 @@
+@inherits LayoutComponentBase
+
+@* Simple layout for sign-in and account pages. These render as plain server pages (they set cookies),
+   so they use lightweight Bootstrap styles instead of the interactive MudBlazor layout. *@
+
+<HeadContent>
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="account.css" />
+</HeadContent>
+
+<div class="account-shell">
+    <header class="account-topbar">
+        <a href="" class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-text">Tech Team Portal</span>
+        </a>
+        <AuthorizeView>
+            <Authorized>
+                <a href="" class="account-back">← Back to the portal</a>
+            </Authorized>
+        </AuthorizeView>
+    </header>
+    <main class="account-main">
+        @Body
+    </main>
+    <footer class="account-footer">© @DateTime.Now.Year Hasib · Tech Team Portal</footer>
+</div>

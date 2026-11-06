@@ -1,0 +1,11 @@
+{
+  "PcServ": {
+    "District": {
+      "InventoryName": "the asset system",
+      "InventoryUrl": "https://assets.example.org",
+      "DeviceConsoleName": "the device console",
+      "DeviceConsoleUrl": "https://console.example.org",
+      "AssetTagDigits": 10
+    }
+  }
+}

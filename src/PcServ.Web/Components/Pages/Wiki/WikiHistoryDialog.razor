@@ -1,0 +1,53 @@
+@* Page content here has already been cleaned by the server when it was published. *@
+<MudDialog>
+    <DialogContent>
+        @if (Versions.Count == 0)
+        {
+            <MudText>This page hasn't been published yet.</MudText>
+        }
+        <ul class="order-history">
+            @foreach (var version in Versions)
+            {
+                <li>
+                    <strong>Version @version.Number</strong>, <LocalTime Value="version.At" Format="MMM d, yyyy h:mm tt" /> by @version.By
+                    @if (!string.IsNullOrEmpty(version.Note))
+                    {
+                        <span>(@version.Note)</span>
+                    }
+                    <div class="d-flex gap-2">
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-expanded="@(_showing == version.Number ? "true" : "false")" aria-label="@($"{(_showing == version.Number ? "Hide" : "Show")} version {version.Number}")" OnClick="() => _showing = _showing == version.Number ? null : version.Number">
+                            @(_showing == version.Number ? "Hide" : "Show")
+                        </MudButton>
+                        @if (version.Number != Current)
+                        {
+                            <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Restore version {version.Number}")" OnClick="() => MudDialog.Close(DialogResult.Ok(version.Number))">Restore</MudButton>
+                        }
+                        else
+                        {
+                            <span class="repair-minor align-self-center">Current version</span>
+                        }
+                    </div>
+                    @if (_showing == version.Number)
+                    {
+                        <div class="wiki-version">
+                            <h2>@version.Title</h2>
+                            <div class="wiki-content">@((MarkupString)version.Html)</div>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Cancel()">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public IReadOnlyList<WikiVersionView> Versions { get; set; } = [];
+    [Parameter] public int Current { get; set; }
+
+    private int? _showing;
+}

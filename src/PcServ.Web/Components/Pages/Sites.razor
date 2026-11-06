@@ -1,0 +1,190 @@
+@page "/sites"
+@inherits RecordPageBase
+@inject PcServ.Web.Services.Maps.SiteMapService Maps
+@inject OrderService OrderRecords
+@inject RepairService RepairRecords
+
+<PageTitle>Sites · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Sites" Subtitle="Schools and district locations, with their buildings.">
+    <Actions>
+        <MudTextField @bind-Value="_search" Placeholder="Search sites" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" Class="search-box" />
+        <MudSwitch T="bool" @bind-Value="_showInactive" Label="Show inactive" Color="Color.Primary" />
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddSite">Add site</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (_sites is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_sites.Count == 0)
+{
+    <EmptyState Title="No sites yet" Icon="@Icons.Material.Outlined.School">
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddSite">Add the first site</MudButton>
+        </AuthorizeView>
+    </EmptyState>
+}
+else
+{
+    <MudGrid Spacing="3">
+        @foreach (var site in Filtered())
+        {
+            <MudItem xs="12" md="6" xl="4">
+                <MudCard Outlined="true" Class="@($"site-card h-100 {(site.IsActive ? "" : "inactive")}")">
+                    <MudCardHeader>
+                        <CardHeaderAvatar>
+                            <MudAvatar Color="Color.Primary" Variant="Variant.Outlined" Class="site-code">@(site.Code ?? site.Name[..1])</MudAvatar>
+                        </CardHeaderAvatar>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6" HtmlTag="h2">@site.Name</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                @site.Type@(site.IsActive ? "" : " · Inactive")
+                            </MudText>
+                        </CardHeaderContent>
+                        <CardHeaderActions>
+                            <AuthorizeView Policy="@Policies.CanManage">
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" AriaLabel="@($"Actions for {site.Name}")">
+                                    <MudMenuItem Icon="@Icons.Material.Outlined.Edit" OnClick="() => EditSite(site)">Edit site</MudMenuItem>
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Add" OnClick="() => AddBuilding(site)">Add building</MudMenuItem>
+                                    <MudDivider />
+                                    <MudMenuItem Icon="@Icons.Material.Outlined.Delete" IconColor="Color.Error" OnClick="() => DeleteSite(site)">Delete site</MudMenuItem>
+                                </MudMenu>
+                            </AuthorizeView>
+                        </CardHeaderActions>
+                    </MudCardHeader>
+                    <MudCardContent Class="pt-0">
+                        <MudStack Spacing="1">
+                            @if (!string.IsNullOrEmpty(site.Address))
+                            {
+                                <div class="d-flex align-center gap-2"><MudIcon Icon="@Icons.Material.Outlined.Place" Size="Size.Small" /><MudText Typo="Typo.body2">@site.Address</MudText></div>
+                            }
+                            @if (!string.IsNullOrEmpty(site.MainPhone))
+                            {
+                                <div class="d-flex align-center gap-2"><MudIcon Icon="@Icons.Material.Outlined.Phone" Size="Size.Small" /><MudText Typo="Typo.body2">@site.MainPhone</MudText></div>
+                            }
+                            @if (!string.IsNullOrEmpty(site.Notes))
+                            {
+                                <div class="d-flex gap-2"><MudIcon Icon="@Icons.Material.Outlined.StickyNote2" Size="Size.Small" /><MudText Typo="Typo.body2" Class="pre-line">@site.Notes</MudText></div>
+                            }
+                        </MudStack>
+
+                        <AuthorizeView Policy="@Policies.CanEdit" Context="staffAccess">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.People" Class="mt-3" Href="@($"sites/{site.Id}/staff")" aria-label="@($"Staff list for {site.Name}")">Staff list</MudButton>
+                        </AuthorizeView>
+
+                        <MudText Typo="Typo.overline" Class="mt-3 d-block">Buildings</MudText>
+                        @if (site.Buildings.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">No buildings added.</MudText>
+                        }
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            @foreach (var building in site.Buildings)
+                            {
+                                <div class="building-tag">
+                                    <MudIcon Icon="@Icons.Material.Outlined.Apartment" Size="Size.Small" />
+                                    <span>@building.Name @FloorsLabel(building)</span>
+                                    <AuthorizeView Policy="@Policies.CanManage" Context="manage">
+                                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Edit" aria-label="@($"Edit {building.Name} at {site.Name}")" OnClick="() => EditBuilding(building)" />
+                                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" aria-label="@($"Delete {building.Name} at {site.Name}")" OnClick="() => DeleteBuilding(building)" />
+                                    </AuthorizeView>
+                                </div>
+                            }
+                        </div>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+@code {
+    private List<Site>? _sites;
+    private string? _search;
+    private bool _showInactive;
+
+    protected override async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateAsync();
+        _sites = await db.Sites.AsNoTracking()
+            .Include(s => s.Buildings.OrderBy(b => b.SortOrder).ThenBy(b => b.Name))
+            .OrderBy(s => s.SortOrder).ThenBy(s => s.Name)
+            .ToListAsync();
+    }
+
+    private IEnumerable<Site> Filtered() => _sites!
+        .Where(s => _showInactive || s.IsActive)
+        .Where(s => string.IsNullOrWhiteSpace(_search)
+            || s.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || (s.Code?.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase) ?? false)
+            || s.Buildings.Any(b => b.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    private static string FloorsLabel(Building b) => b.Floors > 1 ? $"({b.Floors} floors)" : "";
+
+    private async Task AddSite()
+    {
+        var next = (_sites?.Count ?? 0) == 0 ? 0 : _sites!.Max(s => s.SortOrder) + 1;
+        var edited = await Dialogs.EditAsync<SiteDialog, Site>("New site", new Site { SortOrder = next });
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task EditSite(Site site)
+    {
+        var edited = await Dialogs.EditAsync<SiteDialog, Site>("Edit site", site);
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task DeleteSite(Site site)
+    {
+        // Maps have files on disk, so they're deleted on purpose first rather than along with a site.
+        var mapCount = await Maps.CountForSiteAsync(site.Id);
+        if (mapCount > 0)
+        {
+            Snackbar.Add($"{site.Name} has {mapCount} map(s). Delete them on the Site maps page first.", Severity.Warning);
+            return;
+        }
+
+        var orderCount = await OrderRecords.CountForSiteAsync(site.Id);
+        if (orderCount > 0)
+        {
+            Snackbar.Add($"{site.Name} has {orderCount} order(s), so it can't be deleted. Edit it and turn off \"Active site\" instead.", Severity.Warning);
+            return;
+        }
+
+        var repairCount = await RepairRecords.CountForSiteAsync(site.Id);
+        if (repairCount > 0)
+        {
+            Snackbar.Add($"{site.Name} has {repairCount} repair(s), so it can't be deleted. Edit it and turn off \"Active site\" instead.", Severity.Warning);
+            return;
+        }
+
+        var message = $"Delete \"{site.Name}\" and its {site.Buildings.Count} building(s)? " +
+                      "If the site has just closed, consider editing it and turning off \"Active site\" instead.";
+        if (!await Dialogs.ConfirmAsync("Delete site", message, "Delete", danger: true)) return;
+        await DeleteAsync<Site>(site.Id);
+    }
+
+    private async Task AddBuilding(Site site)
+    {
+        var next = site.Buildings.Count == 0 ? 0 : site.Buildings.Max(b => b.SortOrder) + 1;
+        var edited = await Dialogs.EditAsync<BuildingDialog, Building>($"New building at {site.Name}", new Building { SiteId = site.Id, SortOrder = next });
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task EditBuilding(Building building)
+    {
+        var edited = await Dialogs.EditAsync<BuildingDialog, Building>("Edit building", building);
+        if (edited is not null) await SaveAsync(edited);
+    }
+
+    private async Task DeleteBuilding(Building building)
+    {
+        if (!await Dialogs.ConfirmAsync("Delete building", $"Delete \"{building.Name}\"?", "Delete", danger: true)) return;
+        await DeleteAsync<Building>(building.Id);
+    }
+
+}

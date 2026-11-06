@@ -1,0 +1,16 @@
+@page "/Account/AccessDenied"
+@inject SettingsService Settings
+
+<PageTitle>Access denied · Tech Team Portal</PageTitle>
+
+<div class="account-card text-center">
+    <h1 class="h3 mb-2">Access denied</h1>
+    <p class="text-secondary">@_line</p>
+    <a href="" class="btn btn-primary mt-2">Back to overview</a>
+</div>
+
+@code {
+    private string _line = "";
+
+    protected override async Task OnInitializedAsync() => _line = await Settings.QuipAsync(QuipMoment.AccessDenied);
+}

@@ -1,0 +1,169 @@
+@using PcServ.Web.Services.Maps
+@inject MapPhotoService Photos
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            @if (!string.IsNullOrEmpty(Reason) && CanEdit)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+                    <strong>Why this needs checking:</strong> @Reason
+                </MudAlert>
+            }
+
+            @if (CanEdit)
+            {
+                <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" MaxLength="200" AutoFocus="true" />
+                <MudTextField @bind-Value="_description" Label="Notes (optional)" Variant="Variant.Outlined" Lines="3" MaxLength="2000"
+                              HelperText="For example, what to look for here. Don't include passwords." />
+            }
+            else if (!string.IsNullOrEmpty(Description))
+            {
+                <MudText Class="pre-line">@Description</MudText>
+            }
+
+            @if (_photos.Count > 0)
+            {
+                <ul class="photo-grid" style="list-style:none; margin:0; padding:0;" aria-label="Photos">
+                    @foreach (var photo in _photos)
+                    {
+                        <li class="photo-card">
+                            <a href="@($"map-photos/{photo.Id}")" target="_blank" rel="noopener noreferrer" aria-label="@($"Open full size: {AltText(photo)} (opens in a new tab)")">
+                                <img src="@($"map-photos/{photo.Id}?thumb=true")" alt="@AltText(photo)" loading="lazy" />
+                            </a>
+                            <div class="photo-card-footer">
+                                <span class="photo-caption">@photo.Caption</span>
+                                @if (CanEdit)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" Color="Color.Error" aria-label="@($"Delete {AltText(photo)}")" OnClick="() => DeletePhoto(photo)" />
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (!CanEdit && string.IsNullOrEmpty(Description))
+            {
+                <MudText>Nothing has been added to this item.</MudText>
+            }
+
+            @if (CanEdit)
+            {
+                <div>
+                    <MudText Typo="Typo.subtitle2" HtmlTag="h3">Add photos</MudText>
+                    <MudTextField @bind-Value="_caption" Label="Caption for the next photos (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="300" Class="mt-1" Immediate="true" />
+                    <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="UploadFiles" Accept=".jpg,.jpeg,.png,.webp" MaximumFileCount="10" Class="mt-2">
+                        <CustomContent>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.AddAPhoto" Disabled="_uploading" OnClick="@context.OpenFilePickerAsync">
+                                @(_uploading ? "Uploading..." : "Choose photos")
+                            </MudButton>
+                        </CustomContent>
+                        @* Photos save as soon as they're chosen, so a list of chosen files with remove buttons would mislead. *@
+                        <SelectedTemplate></SelectedTemplate>
+                    </MudFileUpload>
+                    <MudText Typo="Typo.caption" Class="d-block mt-1">
+                        JPEG, PNG or WebP, up to 25 MB each. Photos save right away, and location data from phones is removed. Avoid showing students, passwords or badges.
+                    </MudText>
+                    @if (_error is not null)
+                    {
+                        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mt-2">@_error</MudAlert>
+                    }
+                </div>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        @if (CanDelete)
+        {
+            <MudButton Color="Color.Error" StartIcon="@Icons.Material.Outlined.Delete" OnClick="() => MudDialog.Close(DialogResult.Ok(new MapFeatureEdit(null, null, Delete: true)))">Delete</MudButton>
+            <MudSpacer />
+        }
+        @if (CanEdit)
+        {
+            <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Close(DialogResult.Ok(new MapFeatureEdit(_name, _description, Delete: false)))">
+                @(string.IsNullOrEmpty(Reason) ? "Save" : "Save as checked")
+            </MudButton>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => MudDialog.Cancel()">Close</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    [Parameter] public int FeatureId { get; set; }
+    [Parameter] public string? Name { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public string? Reason { get; set; }
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public bool CanDelete { get; set; }
+
+    private string? _name;
+    private string? _description;
+    private string? _caption;
+    private string? _error;
+    private bool _uploading;
+    private List<MapPhotoView> _photos = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _name = Name;
+        _description = Description;
+        _photos = await Photos.ListAsync(FeatureId);
+    }
+
+    private string AltText(MapPhotoView photo) =>
+        !string.IsNullOrWhiteSpace(photo.Caption) ? photo.Caption : $"Photo {_photos.IndexOf(photo) + 1} of {Name ?? "this item"}";
+
+    private async Task UploadFiles(IReadOnlyList<IBrowserFile>? files)
+    {
+        if (files is null || files.Count == 0) return;
+        _uploading = true;
+        _error = null;
+        StateHasChanged();
+
+        var user = (await AuthState).User;
+        var problems = new List<string>();
+        foreach (var file in files)
+        {
+            try
+            {
+                await using var stream = file.OpenReadStream(MapPhotoService.MaxUploadBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                _photos.Add(await Photos.AddAsync(FeatureId, file.Name, memory.ToArray(), _caption, user));
+                StateHasChanged();
+            }
+            catch (Exception ex) when (ex is MapFileException or InvalidOperationException)
+            {
+                problems.Add($"{file.Name}: {ex.Message}");
+            }
+            catch (IOException)
+            {
+                problems.Add($"{file.Name}: couldn't be read. The limit is 25 MB.");
+            }
+        }
+
+        if (problems.Count > 0) _error = string.Join(" ", problems);
+        _caption = null;
+        _uploading = false;
+    }
+
+    private async Task DeletePhoto(MapPhotoView photo)
+    {
+        try
+        {
+            await Photos.DeleteAsync(photo.Id, (await AuthState).User);
+            _photos.Remove(photo);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

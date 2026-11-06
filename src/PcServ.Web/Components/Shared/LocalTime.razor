@@ -1,0 +1,7 @@
+@* Shows a UTC timestamp in the server's local time zone. Set the TZ environment variable in Docker to your district's zone. *@
+<span title="@Value.ToString("u")">@Value.ToLocalTime().ToString(Format)</span>
+
+@code {
+    [Parameter, EditorRequired] public DateTime Value { get; set; }
+    [Parameter] public string Format { get; set; } = "MMM d, h:mm tt";
+}

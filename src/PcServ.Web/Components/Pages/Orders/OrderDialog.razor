@@ -1,0 +1,139 @@
+@inject SiteStaffService StaffList
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField @bind-Value="_item" @bind-Value:after="ClearError" Label="What's being ordered" Variant="Variant.Outlined" MaxLength="200" AutoFocus="true" Immediate="true" />
+            <MudStack Row="true" Spacing="3">
+                <MudSelect T="int" @bind-Value="_siteId" @bind-Value:after="SiteChanged" Label="Site" Variant="Variant.Outlined" Class="flex-1"
+                           ToStringFunc="@(id => Sites.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+                    @foreach (var site in Sites)
+                    {
+                        <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudNumericField T="int" @bind-Value="_quantity" Label="Quantity" Variant="Variant.Outlined" Min="1" Class="order-quantity" />
+            </MudStack>
+            <MudStack Row="true" Spacing="3">
+                <StaffNameField @bind-Value="_requestedFor" @bind-Value:after="ForChanged" Label="For (optional)" Staff="_staff" Class="flex-1" HelperText="The staff member it's for." />
+                <MudTextField @bind-Value="_room" Label="Room (optional)" Variant="Variant.Outlined" MaxLength="60" Immediate="true" Class="flex-1" />
+            </MudStack>
+            <StaffNameField @bind-Value="_contact" @bind-Value:after="ContactChanged" Label="Contact (optional)" Staff="_staff" HelperText="The person handling the order. Pick from the site's staff list, or type a name." />
+            <MudSelect T="int" @bind-Value="_vendorChoice" @bind-Value:after="ClearError" Label="Vendor" Variant="Variant.Outlined"
+                       ToStringFunc="@(id => id == OtherVendorChoice ? "Other (not on the approved list)" : Vendors.FirstOrDefault(v => v.Id == id)?.Name ?? "")">
+                @foreach (var vendor in Vendors)
+                {
+                    <MudSelectItem T="int" Value="vendor.Id">@vendor.Name</MudSelectItem>
+                }
+                <MudSelectItem T="int" Value="OtherVendorChoice">Other (not on the approved list)</MudSelectItem>
+            </MudSelect>
+            @if (Vendors.Count == 0)
+            {
+                <MudText Typo="Typo.body2">No approved vendors have been added yet. A Manager or Admin can add them under Manage.</MudText>
+            }
+            @if (_vendorChoice == OtherVendorChoice)
+            {
+                <MudTextField @bind-Value="_otherVendor" @bind-Value:after="ClearError" Label="Other vendor's name" Variant="Variant.Outlined" MaxLength="120" Immediate="true"
+                              HelperText="For example, a catalog or a contractor." />
+            }
+            <MudStack Row="true" Spacing="3">
+                <MudTextField @bind-Value="_quoteNumber" Label="Quote or PO number (optional)" Variant="Variant.Outlined" MaxLength="60" Immediate="true" Class="flex-1" />
+                <MudTextField @bind-Value="_trackingNumber" Label="Tracking number (optional)" Variant="Variant.Outlined" MaxLength="100" Immediate="true" Class="flex-1" />
+            </MudStack>
+            <MudTextField @bind-Value="_notes" Label="Notes (optional)" Variant="Variant.Outlined" Lines="3" MaxLength="2000" Immediate="true" />
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">@(Order is null ? "Create order" : "Save")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int OtherVendorChoice = -1;
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    [Parameter] public OrderView? Order { get; set; }
+    [Parameter] public IReadOnlyList<Site> Sites { get; set; } = [];
+
+    /// <summary>Approved vendors, plus this order's own vendor if it has since lost approval.</summary>
+    [Parameter] public IReadOnlyList<Vendor> Vendors { get; set; } = [];
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<OrderEdit, Task<string?>>? OnSave { get; set; }
+
+    private List<SiteStaffMember> _staff = [];
+
+    /// <summary>Whether the contact was filled in for the person, so it can follow the site until they change it.</summary>
+    private bool _contactIsAutomatic;
+
+    private string? _contact, _item, _requestedFor, _room, _otherVendor, _quoteNumber, _trackingNumber, _notes, _error;
+    private int _siteId, _quantity = 1, _vendorChoice;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _contact = Order?.Contact;
+        _item = Order?.Item;
+        _siteId = Order?.SiteId ?? (Sites.Count == 1 ? Sites[0].Id : 0);
+        _quantity = Order?.Quantity ?? 1;
+        _requestedFor = Order?.RequestedFor;
+        _room = Order?.Room;
+        _quoteNumber = Order?.QuoteNumber;
+        _trackingNumber = Order?.TrackingNumber;
+        _notes = Order?.Notes;
+        if (Order is null) _vendorChoice = Vendors.Count == 0 ? OtherVendorChoice : 0;
+        else if (Order.VendorId is { } vendorId) _vendorChoice = vendorId;
+        else
+        {
+            _vendorChoice = OtherVendorChoice;
+            _otherVendor = Order.VendorName;
+        }
+        await LoadStaff();
+    }
+
+    private async Task LoadStaff()
+    {
+        _staff = _siteId == 0 ? [] : await StaffList.ListAsync(_siteId, (await AuthState).User);
+        if (Order is null && (_contactIsAutomatic || string.IsNullOrWhiteSpace(_contact)))
+        {
+            _contact = _staff.FirstOrDefault(s => s.IsOrderContact)?.Name;
+            _contactIsAutomatic = true;
+        }
+    }
+
+    private async Task SiteChanged()
+    {
+        ClearError();
+        await LoadStaff();
+    }
+
+    private void ContactChanged() => _contactIsAutomatic = false;
+
+    /// <summary>Saves looking up the room, without replacing one that's already been entered.</summary>
+    private void ForChanged()
+    {
+        var person = _staff.FirstOrDefault(s => s.Name == _requestedFor);
+        if (person?.Room is not null && string.IsNullOrWhiteSpace(_room)) _room = person.Room;
+    }
+
+    private void ClearError() => _error = null;
+
+    private async Task Save()
+    {
+        if (_vendorChoice == 0)
+        {
+            _error = "Choose a vendor.";
+            return;
+        }
+        var isOther = _vendorChoice == OtherVendorChoice;
+        var edit = new OrderEdit(_item, _quantity, _siteId, _requestedFor, _room, isOther ? null : _vendorChoice, isOther ? _otherVendor : null, _quoteNumber, _trackingNumber, _notes, _contact);
+        _error = OnSave is null ? null : await OnSave(edit);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

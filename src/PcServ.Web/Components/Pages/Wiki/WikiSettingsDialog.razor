@@ -1,0 +1,61 @@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudSelect T="int" @bind-Value="_sectionId" Label="Section" Variant="Variant.Outlined" ToStringFunc="@(id => Sections.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+                @foreach (var section in Sections)
+                {
+                    <MudSelectItem T="int" Value="section.Id">@section.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="_role" Label="Who can read it" Variant="Variant.Outlined">
+                <MudSelectItem T="string" Value="@Roles.Viewer">Everyone</MudSelectItem>
+                <MudSelectItem T="string" Value="@Roles.Tech">Techs and above</MudSelectItem>
+            </MudSelect>
+            <div class="d-flex flex-wrap gap-2 align-center">
+                <span>Position in its section:</span>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" aria-label="Move this page up" OnClick="() => OnMove!(-1)">Up</MudButton>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" aria-label="Move this page down" OnClick="() => OnMove!(1)">Down</MudButton>
+            </div>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        @if (CanDelete)
+        {
+            <MudButton Color="Color.Error" StartIcon="@Icons.Material.Outlined.Delete" OnClick="() => MudDialog.Close(DialogResult.Ok(WikiDeleteRequest))">Delete page</MudButton>
+            <MudSpacer />
+        }
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    public const string WikiDeleteRequest = "delete";
+
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public IReadOnlyList<WikiSectionView> Sections { get; set; } = [];
+    [Parameter] public int SectionId { get; set; }
+    [Parameter] public string Role { get; set; } = Roles.Viewer;
+    [Parameter] public bool CanDelete { get; set; }
+    [Parameter] public Func<int, Task>? OnMove { get; set; }
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<int, string, Task<string?>>? OnSave { get; set; }
+
+    private int _sectionId;
+    private string _role = Roles.Viewer;
+    private string? _error;
+
+    protected override void OnInitialized() => (_sectionId, _role) = (SectionId, Role);
+
+    private async Task Save()
+    {
+        _error = OnSave is null ? null : await OnSave(_sectionId, _role);
+        if (_error is null) MudDialog.Close(DialogResult.Ok("saved"));
+    }
+}

@@ -1,0 +1,25 @@
+@inject TestVersion Test
+@inject TestVersionManager Manager
+@inject NavigationManager Nav
+
+@if (_on)
+{
+    <div class="test-version-banner" role="status">
+        <span><strong>Test version.</strong> You're seeing made-up data, and changes here don't affect real records. User accounts and Settings are the exception: those are still real.</span>
+        <button type="button" class="test-version-leave" @onclick="Leave">Back to real data</button>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private bool _on;
+
+    protected override async Task OnInitializedAsync() => _on = await Test.IsOnAsync((await AuthState).User);
+
+    private async Task Leave()
+    {
+        await Manager.TurnOffAsync((await AuthState).User);
+        Nav.NavigateTo("", forceLoad: true);
+    }
+}

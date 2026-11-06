@@ -1,0 +1,25 @@
+<MudPaper Outlined="true" Class="stat-card pa-4">
+    @if (Href is null)
+    {
+        @Content
+    }
+    else
+    {
+        <a href="@Href" class="stat-card-link">@Content</a>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public int Value { get; set; }
+    [Parameter] public string Icon { get; set; } = Icons.Material.Outlined.Insights;
+    [Parameter] public string? Href { get; set; }
+
+    private RenderFragment Content => @<div class="d-flex align-center gap-3">
+        <div class="stat-icon"><MudIcon Icon="@Icon" /></div>
+        <div>
+            <MudText Typo="Typo.h4" HtmlTag="p" Class="stat-value">@Value.ToString("N0")</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">@Label</MudText>
+        </div>
+    </div>;
+}

@@ -1,0 +1,89 @@
+@page "/wiki"
+@inject WikiService Wiki
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>Wiki · Tech Team Portal</PageTitle>
+
+<WikiShell Tree="_tree">
+    <Actions>
+        <WikiActions Tree="_tree" OnChanged="Reload" />
+    </Actions>
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(Query))
+        {
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-1">Search results</MudText>
+            <MudText Class="mb-4" role="status">@_results.Count result@(_results.Count == 1 ? "" : "s") for "@Query". <MudLink Href="wiki" Underline="Underline.Always">Back to the wiki</MudLink></MudText>
+            <ul class="wiki-results">
+                @foreach (var result in _results)
+                {
+                    <li>
+                        <MudLink Href="@($"wiki/{result.PageId}")" Underline="Underline.Always"><strong>@result.Title</strong></MudLink>
+                        <span class="repair-minor">@result.SectionName</span>
+                        <div>@result.Snippet</div>
+                    </li>
+                }
+            </ul>
+        }
+        else
+        {
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-1">Wiki</MudText>
+            <MudText Class="mb-4">How-tos, notes and procedures for the team.</MudText>
+
+            @if (_recent.Count > 0)
+            {
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Recently updated</MudText>
+                <ul class="wiki-results mb-4">
+                    @foreach (var entry in _recent)
+                    {
+                        <li>
+                            <MudLink Href="@($"wiki/{entry.Id}")" Underline="Underline.Always"><strong>@entry.Title</strong></MudLink>
+                            <span class="repair-minor">@entry.SectionName · <LocalTime Value="entry.At" Format="MMM d, yyyy" /> by @entry.By</span>
+                        </li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <MudText Class="mb-4">Nothing has been published yet.</MudText>
+            }
+
+            <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">Sections</MudText>
+            <div class="wiki-section-cards">
+                @foreach (var section in _tree)
+                {
+                    <MudPaper Outlined="true" Class="pa-3">
+                        <MudText Typo="Typo.subtitle1" HtmlTag="h3"><strong>@section.Name</strong></MudText>
+                        @if (section.Pages.Count > 0)
+                        {
+                            <MudLink Href="@($"wiki/{section.Pages[0].Id}")" Underline="Underline.Always">@section.Pages.Count page@(section.Pages.Count == 1 ? "" : "s")</MudLink>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2">No pages yet</MudText>
+                        }
+                    </MudPaper>
+                }
+            </div>
+        }
+    </ChildContent>
+</WikiShell>
+
+@code {
+    [SupplyParameterFromQuery(Name = "q")] private string? Query { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<WikiSectionView> _tree = [];
+    private List<WikiRecentPage> _recent = [];
+    private List<WikiSearchResult> _results = [];
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        var user = (await AuthState).User;
+        _tree = await Wiki.TreeAsync(user);
+        _recent = await Wiki.RecentAsync(user);
+        _results = await Wiki.SearchAsync(Query, user);
+    }
+}

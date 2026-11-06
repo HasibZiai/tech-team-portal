@@ -1,0 +1,30 @@
+# Caddy reverse proxy: provides HTTPS in front of the portal.
+#
+# By default this uses Caddy's own internal certificate authority ("tls internal"), which needs
+# no internet access and no DNS provider. Browsers will warn until Caddy's root certificate is
+# trusted. Export it with:
+#   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+# and install it as a trusted root (or ask whoever manages your organization's certificates).
+#
+# Alternatives (see docs/admin-guide.md):
+#   - Your organization's own certificate: replace "tls internal" with
+#       tls /etc/caddy/certs/pcserv.crt /etc/caddy/certs/pcserv.key
+#     and mount the files into the container.
+#   - A free Let's Encrypt certificate via DNS challenge (no open ports needed) using a
+#     Caddy build that includes your DNS provider's plugin.
+
+{$PCSERV_HOSTNAME} {
+	tls internal
+
+	encode zstd gzip
+
+	reverse_proxy web:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

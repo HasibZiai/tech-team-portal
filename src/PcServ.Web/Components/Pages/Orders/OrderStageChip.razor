@@ -1,0 +1,14 @@
+@* The stage's name is always written out, so it doesn't rely on color. *@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@ChipColor" Class="ma-0">@OrderStages.Name(Status, Contact)</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public OrderStatus Status { get; set; }
+    [Parameter] public string? Contact { get; set; }
+
+    private Color ChipColor => Status switch
+    {
+        OrderStatus.Received => Color.Success,
+        OrderStatus.Cancelled => Color.Default,
+        _ => Color.Primary,
+    };
+}

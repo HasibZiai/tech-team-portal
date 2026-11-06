@@ -1,0 +1,20 @@
+**/bin/
+**/obj/
+**/App_Data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.git/
+.github/
+.vs/
+.vscode/
+.config/
+tests/
+tools/
+deploy/
+docs/
+compose.yaml
+*.md
+
+# Settings unique to one district come from deploy/.env in Docker
+src/PcServ.Web/district.json

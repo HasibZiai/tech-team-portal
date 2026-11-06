@@ -1,0 +1,119 @@
+@page "/sites/{SiteId:int}/staff"
+@attribute [Authorize(Policy = Policies.CanEdit)]
+@inject SiteStaffService Staff
+@inject AppDbFactory DbFactory
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+
+<PageTitle>Staff list · Tech Team Portal</PageTitle>
+
+@if (_loaded && _siteName is null)
+{
+    <EmptyState Title="Site not found" Icon="@Icons.Material.Outlined.School">
+        <MudButton Href="sites" Variant="Variant.Filled" Color="Color.Primary">Back to sites</MudButton>
+    </EmptyState>
+}
+else if (_siteName is not null)
+{
+    <MudButton Href="sites" Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.ArrowBack" Class="mb-2">All sites</MudButton>
+    <PageHeader Title="@($"Staff at {_siteName}")" Subtitle="Names here are suggested on this site's orders. Only Techs and above can see this list.">
+        <Actions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="Add">Add person</MudButton>
+        </Actions>
+    </PageHeader>
+
+    @if (_members.Count == 0)
+    {
+        <EmptyState Title="No one on this list yet" Icon="@Icons.Material.Outlined.People">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Add">Add person</MudButton>
+        </EmptyState>
+    }
+    else
+    {
+        <MudTable T="SiteStaffMember" Items="_members" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Job title</MudTh>
+                <MudTh>Room</MudTh>
+                <MudTh>Phone</MudTh>
+                <MudTh>Email</MudTh>
+                <MudTh>Orders</MudTh>
+                <MudTh><span class="visually-hidden">Actions</span></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@context.Name</MudTd>
+                <MudTd DataLabel="Job title">@context.JobTitle</MudTd>
+                <MudTd DataLabel="Room">@context.Room</MudTd>
+                <MudTd DataLabel="Phone">@context.Phone</MudTd>
+                <MudTd DataLabel="Email">@context.Email</MudTd>
+                <MudTd DataLabel="Orders">@(context.IsOrderContact ? "Usual contact" : "")</MudTd>
+                <MudTd DataLabel="Actions" Class="text-nowrap">
+                    <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Edit {context.Name}")" OnClick="() => Edit(context)">Edit</MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Error" aria-label="@($"Remove {context.Name}")" OnClick="() => Remove(context)">Remove</MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+else
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+
+@code {
+    [Parameter] public int SiteId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private string? _siteName;
+    private bool _loaded;
+    private List<SiteStaffMember> _members = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using (var db = await DbFactory.CreateAsync())
+        {
+            _siteName = await db.Sites.AsNoTracking().Where(s => s.Id == SiteId).Select(s => s.Name).FirstOrDefaultAsync();
+        }
+        if (_siteName is not null) _members = await Staff.ListAsync(SiteId, (await AuthState).User);
+        _loaded = true;
+    }
+
+    private Task Add() => Edit(new SiteStaffMember { SiteId = SiteId });
+
+    private async Task Edit(SiteStaffMember member)
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<SiteStaffDialog>
+        {
+            { d => d.Member, member },
+            { d => d.OnSave, async model =>
+                {
+                    try
+                    {
+                        await Staff.SaveAsync(model, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<SiteStaffDialog>(member.Id == 0 ? "Add person" : "Edit person", parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            _members = await Staff.ListAsync(SiteId, user);
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+    }
+
+    private async Task Remove(SiteStaffMember member)
+    {
+        if (!await Dialogs.ConfirmAsync("Remove from list", $"Remove {member.Name} from this list? Orders that name them won't change.", "Remove", danger: true)) return;
+        var user = (await AuthState).User;
+        await Staff.DeleteAsync(member.Id, user);
+        _members = await Staff.ListAsync(SiteId, user);
+    }
+}

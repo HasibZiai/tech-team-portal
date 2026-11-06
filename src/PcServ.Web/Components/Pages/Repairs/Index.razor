@@ -1,0 +1,497 @@
+@page "/repairs"
+@attribute [Authorize(Policy = Policies.CanEdit)]
+@inject RepairService Repairs
+@inject RepairListService Lists
+@inject AppDbFactory DbFactory
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject SettingsService AppSettings
+@inject DistrictSettings District
+
+<PageTitle>Repairs · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Repairs" Subtitle="@($"Check devices in, track them, and keep {District.InventoryName} up to date. Longest waiting first.")">
+    <Actions>
+        @if (District.InventoryUrl is { } inventoryUrl)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" EndIcon="@Icons.Material.Outlined.OpenInNew" Href="@inventoryUrl" Target="_blank" rel="noopener noreferrer" aria-label="@($"Open {District.InventoryName} (opens in a new tab)")">Open @District.InventoryName</MudButton>
+        }
+    </Actions>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="pa-4 mb-4">
+    <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-3">Check in a device</MudText>
+    <div class="repair-form">
+        <MudTextField @ref="_tagField" @bind-Value="_tag" Label="Asset tag" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="40" Immediate="true" AutoFocus="true"
+                      OnKeyDown="TagKeyDown" OnBlur="() => LookUp()" HelperText="Scan or type it. Known devices fill in." />
+        <MudTextField @bind-Value="_serial" Label="Serial number" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="60" Immediate="true" />
+        <MudSelect T="int" @bind-Value="_modelId" Label="Model" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                   ToStringFunc="@(id => _models.FirstOrDefault(m => m.Id == id)?.Name ?? "")">
+            <MudSelectItem T="int" Value="0">Not set</MudSelectItem>
+            @foreach (var model in _models.Where(m => m.IsActive || m.Id == _modelId))
+            {
+                <MudSelectItem T="int" Value="model.Id">@model.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int" @bind-Value="_siteId" Label="Site" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                   ToStringFunc="@(id => _sites.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+            @foreach (var site in _sites)
+            {
+                <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int" @bind-Value="_reasonId" Label="Reason for repair" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                   ToStringFunc="@(id => id == OtherReason ? "Other" : _reasons.FirstOrDefault(r => r.Id == id)?.Name ?? "")">
+            @foreach (var reason in _reasons.Where(r => r.IsActive))
+            {
+                <MudSelectItem T="int" Value="reason.Id">@reason.Name</MudSelectItem>
+            }
+            <MudSelectItem T="int" Value="OtherReason">Other</MudSelectItem>
+        </MudSelect>
+        @if (_reasonId == OtherReason)
+        {
+            <MudTextField @bind-Value="_otherReason" Label="What's wrong" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="200" Immediate="true" />
+        }
+        <MudTextField @bind-Value="_pickupPoint" Label="Collected from (optional)" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="80" Immediate="true" HelperText="A cart, classroom or the library." />
+        <MudDatePicker @bind-Date="_dateIn" Label="Date in" Variant="Variant.Outlined" Margin="Margin.Dense" MaxDate="DateTime.Today" DateFormat="MMM d, yyyy" Editable="true" />
+    </div>
+    @if (_alreadyInId is { } openId)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-2">
+            @_tag is already in for repairs.
+            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="() => EditById(openId)">Open that repair</MudButton>
+        </MudAlert>
+    }
+    @if (_comebackNote is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-2">@_comebackNote</MudAlert>
+    }
+    @if (_formError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mt-2">@_formError</MudAlert>
+    }
+    <div class="d-flex flex-wrap align-center gap-3 mt-3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="CheckIn">Check in</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.QrCodeScanner" OnClick="ScanWithCamera">Scan with camera</MudButton>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default" Class="ma-0">Experimental</MudChip>
+        <MudText Typo="Typo.body2" role="status">@_lastCheckIn</MudText>
+    </div>
+</MudPaper>
+
+@if (InventoryGroups.Any())
+{
+    <MudPaper Outlined="true" Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-1">To update in @District.InventoryName</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">Download a list of asset tags for a bulk update in @District.InventoryName, or update each device there by hand, then mark them as updated here.</MudText>
+        <ul class="inventory-groups">
+            @foreach (var group in InventoryGroups)
+            {
+                <li>
+                    <span><strong>@group.Key</strong>: @group.Count() device@(group.Count() == 1 ? "" : "s")</span>
+                    <span class="d-flex flex-wrap gap-2">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Download" aria-label="@($"Download list for {group.Key}")" OnClick="() => DownloadList(group.Key, group.ToList())">Download list</MudButton>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Mark as updated: {group.Key}")" OnClick="() => MarkUpdated(group.ToList())">Mark as updated</MudButton>
+                    </span>
+                </li>
+            }
+        </ul>
+    </MudPaper>
+}
+
+@if (ToDeprovision.Count > 0)
+{
+    <MudPaper Outlined="true" Class="pa-4 mb-4">
+        <div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-1">
+            <MudText Typo="Typo.h6" HtmlTag="h2">To deprovision in @District.DeviceConsoleName</MudText>
+            @if (District.DeviceConsoleUrl is { } consoleUrl)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" EndIcon="@Icons.Material.Outlined.OpenInNew" Href="@consoleUrl" Target="_blank" rel="noopener noreferrer" aria-label="@($"Open {District.DeviceConsoleName} (opens in a new tab)")">Open @District.DeviceConsoleName</MudButton>
+            }
+        </div>
+        <MudText Typo="Typo.body2" Class="mb-3">These devices are out of circulation. Deprovision each one there, then mark it here.</MudText>
+        <ul class="inventory-groups">
+            @foreach (var device in ToDeprovision)
+            {
+                <li>
+                    <span>
+                        <strong>@device.AssetTag</strong>
+                        @string.Join(" · ", new[] { device.ModelName, device.SiteName }.Where(t => !string.IsNullOrEmpty(t)))
+                        <span class="repair-minor d-block">@(device.SerialNumber is null ? "No serial number on file. Add it with Edit in the list below." : $"Serial number {device.SerialNumber}")</span>
+                    </span>
+                    <span class="d-flex flex-wrap gap-2">
+                        @if (device.SerialNumber is { } serial)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.ContentCopy" aria-label="@($"Copy serial number of {device.AssetTag}")" OnClick="() => CopyTag(serial)">Copy serial number</MudButton>
+                        }
+                        <MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Mark as deprovisioned: {device.AssetTag}")" OnClick="() => MarkDeprovisioned(device)">Mark as deprovisioned</MudButton>
+                    </span>
+                </li>
+            }
+        </ul>
+    </MudPaper>
+}
+
+<div class="order-filters mb-3">
+    <MudTextField @bind-Value="_search" Label="Search" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" DebounceInterval="150"
+                  HelperText="Asset tag, serial number, model, reason or notes" />
+    <MudSelect T="string" @bind-Value="_show" Label="Show" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+        <MudSelectItem T="string" Value="@ShowOpen">Open repairs</MudSelectItem>
+        <MudSelectItem T="string" Value="@ShowAll">All repairs</MudSelectItem>
+        <MudSelectItem T="string" Value="@ShowInventory">To update in @District.InventoryName</MudSelectItem>
+        <MudSelectItem T="string" Value="@ShowFines">Fines to assign</MudSelectItem>
+        <MudSelectItem T="string" Value="@ShowRetired">Out of circulation</MudSelectItem>
+    </MudSelect>
+    <MudSelect T="int" @bind-Value="_siteFilter" Label="Site filter" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+               ToStringFunc="@(id => id == 0 ? "All sites" : _sites.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+        <MudSelectItem T="int" Value="0">All sites</MudSelectItem>
+        @foreach (var site in _sites)
+        {
+            <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+        }
+    </MudSelect>
+</div>
+
+@if (_repairs is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudTable T="RepairView" Items="Filtered" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Md">
+        <HeaderContent>
+            <MudTh>Device</MudTh>
+            <MudTh>Site</MudTh>
+            <MudTh>Reason</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Date in</MudTh>
+            <MudTh>Date out</MudTh>
+            <MudTh>Completed</MudTh>
+            <MudTh>@DistrictSettings.Label(District.InventoryName)</MudTh>
+            <MudTh><span class="visually-hidden">Actions</span></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Device" Class="repair-device">
+                <span class="repair-tag">
+                    <strong>@context.AssetTag</strong>
+                    <MudTooltip Text="Copy asset tag">
+                        <MudIconButton Icon="@Icons.Material.Outlined.ContentCopy" Size="Size.Small" aria-label="@($"Copy asset tag {context.AssetTag}")" OnClick="() => CopyTag(context.AssetTag)" />
+                    </MudTooltip>
+                </span>
+                <div class="repair-minor">@string.Join(" · ", new[] { context.ModelName, context.SerialNumber }.Where(t => !string.IsNullOrEmpty(t)))</div>
+            </MudTd>
+            <MudTd DataLabel="Site">
+                @context.SiteName
+                @if (!string.IsNullOrEmpty(context.PickupPoint))
+                {
+                    <div class="repair-minor">From @context.PickupPoint</div>
+                }
+            </MudTd>
+            <MudTd DataLabel="Reason">@context.ReasonText</MudTd>
+            <MudTd DataLabel="Status">
+                <MudSelect T="RepairStatus" Value="context.Status" ValueChanged="status => SetStatus(context, status)" Label="@($"Status of {context.AssetTag}")" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                           ToStringFunc="RepairStatuses.Name" Class="repair-status">
+                    @foreach (var status in RepairStatuses.All)
+                    {
+                        <MudSelectItem T="RepairStatus" Value="status">@RepairStatuses.Name(status)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudTd>
+            <MudTd DataLabel="Date in" Class="text-nowrap">@context.DateIn.ToString("MMM d, yyyy")@WaitText(context)</MudTd>
+            <MudTd DataLabel="Date out" Class="text-nowrap">@context.DateOut?.ToString("MMM d, yyyy")</MudTd>
+            <MudTd DataLabel="Completed">
+                <MudCheckBox T="bool" Value="context.Status == RepairStatus.Completed" ValueChanged="done => SetCompleted(context, done)" Color="Color.Primary" Dense="true"
+                             Label="Done" aria-label="@($"{context.AssetTag} completed")" />
+            </MudTd>
+            <MudTd DataLabel="@DistrictSettings.Label(District.InventoryName)" Class="repair-inventory">
+                @if (context.InventoryIsCurrent)
+                {
+                    <span>Updated to @RepairStatuses.InventoryName(context.Status)</span>
+                }
+                else
+                {
+                    <div><strong>Set to @RepairStatuses.InventoryName(context.Status)</strong></div>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Class="pa-0" aria-label="@($"Mark as updated in {District.InventoryName}: {context.AssetTag}")" OnClick="() => MarkUpdated([context])">Mark as updated</MudButton>
+                }
+                @if (context.FineNeeded && !context.FineDone)
+                {
+                    <div><strong>Fine to assign</strong></div>
+                }
+                @if (context.Status == RepairStatus.BeyondRepair && context.DeprovisionedOn is { } deprovisionedOn)
+                {
+                    <div>Deprovisioned @deprovisionedOn.ToString("MMM d, yyyy")</div>
+                }
+            </MudTd>
+            <MudTd DataLabel="Actions"><MudButton Variant="Variant.Text" Size="Size.Small" aria-label="@($"Edit {context.AssetTag}")" OnClick="() => Edit(context)">Edit</MudButton></MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText>No repairs match. Check in a device above, or change what's shown.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+@code {
+    private const int OtherReason = -1;
+    private const string ShowOpen = "open", ShowAll = "all", ShowInventory = "inventory", ShowFines = "fines", ShowRetired = "retired";
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    /// <summary>Lets the Overview link straight to a filtered list.</summary>
+    [SupplyParameterFromQuery(Name = "show")] private string? ShowQuery { get; set; }
+
+    private List<RepairView>? _repairs;
+    private List<Site> _sites = [];
+    private List<RepairListItem> _models = [], _reasons = [];
+    private MudTextField<string>? _tagField;
+
+    private string? _comebackNote;
+    private string? _tag, _serial, _otherReason, _pickupPoint, _formError, _lastCheckIn, _search, _lastLookUp;
+    private int _modelId, _siteId, _reasonId, _siteFilter;
+    private int? _alreadyInId;
+    private DateTime? _dateIn = DateTime.Today;
+    private string _show = ShowOpen;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    private IEnumerable<IGrouping<string, RepairView>> InventoryGroups => (_repairs ?? [])
+        .Where(r => !r.InventoryIsCurrent)
+        .OrderBy(r => r.Status)
+        .GroupBy(r => RepairStatuses.InventoryName(r.Status));
+
+    private List<RepairView> ToDeprovision => RepairService.OutOfCirculation(_repairs ?? []).Where(r => r.DeprovisionedOn is null).ToList();
+
+    private IEnumerable<RepairView> Filtered => (_show == ShowRetired ? RepairService.OutOfCirculation(_repairs ?? []) : _repairs ?? [])
+        .Where(r => _show switch
+        {
+            ShowOpen => !RepairStatuses.IsDone(r.Status),
+            ShowInventory => !r.InventoryIsCurrent,
+            ShowFines => r.FineNeeded && !r.FineDone,
+            _ => true,
+        })
+        .Where(r => _siteFilter == 0 || r.SiteId == _siteFilter)
+        .Where(r => string.IsNullOrWhiteSpace(_search) || new[] { r.AssetTag, r.SerialNumber, r.ModelName, r.ReasonText, r.Notes, r.PickupPoint }
+            .Any(text => text?.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase) == true));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using (var db = await DbFactory.CreateAsync())
+        {
+            _sites = await db.Sites.AsNoTracking().Where(s => s.IsActive).OrderBy(s => s.SortOrder).ThenBy(s => s.Name).ToListAsync();
+        }
+        _models = await Lists.ListAsync(RepairListKind.Model);
+        _reasons = await Lists.ListAsync(RepairListKind.Reason);
+        if (_sites.Count == 1) _siteId = _sites[0].Id;
+        if (ShowQuery is ShowInventory or ShowFines or ShowRetired or ShowAll) _show = ShowQuery;
+        await Reload();
+    }
+
+    private async Task Reload() => _repairs = await Repairs.ListAsync((await AuthState).User);
+
+    private static string WaitText(RepairView repair)
+    {
+        if (RepairStatuses.IsDone(repair.Status)) return "";
+        var days = Today.DayNumber - repair.DateIn.DayNumber;
+        return days <= 0 ? " (today)" : days == 1 ? " (1 day)" : $" ({days} days)";
+    }
+
+    /// <summary>Scanners end with Enter, which moves on to fill in what's known about the device.</summary>
+    private async Task TagKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LookUp();
+    }
+
+    private async Task LookUp()
+    {
+        if (_tag?.Trim() == _lastLookUp) return;
+        _lastLookUp = _tag?.Trim();
+        _formError = null;
+        _alreadyInId = null;
+        _comebackNote = null;
+
+        var known = await Repairs.LookUpAsync(_tag, (await AuthState).User);
+        if (known is null)
+        {
+            _serial = null;
+            _modelId = 0;
+            return;
+        }
+        _serial = known.SerialNumber;
+        _modelId = known.ModelId ?? 0;
+        if (known.SiteId is { } site && _sites.Any(s => s.Id == site)) _siteId = site;
+        _alreadyInId = known.OpenRepairId;
+        _comebackNote = ComebackNote(known.AssetTag, known.OutOfCirculation, known.DeprovisionedOn);
+    }
+
+    private async Task CheckIn()
+    {
+        _formError = null;
+        if (_siteId == 0)
+        {
+            _formError = "Choose a site.";
+            return;
+        }
+        if (_reasonId == 0)
+        {
+            _formError = "Choose a reason for the repair.";
+            return;
+        }
+        if (_dateIn is not { } dateIn)
+        {
+            _formError = "Choose the date in.";
+            return;
+        }
+
+        try
+        {
+            var entry = new RepairCheckIn(_tag, _serial, _modelId == 0 ? null : _modelId, _siteId, _reasonId == OtherReason ? null : _reasonId, _reasonId == OtherReason ? _otherReason : null, _pickupPoint, DateOnly.FromDateTime(dateIn));
+            await Repairs.CheckInAsync(entry, (await AuthState).User);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _formError = ex.Message;
+            return;
+        }
+
+        // Keep the site, pickup point and date, because a batch usually comes from one place. Then be ready for the next scan.
+        _lastCheckIn = $"Checked in {_tag?.Trim()}.";
+        (_tag, _serial, _otherReason, _lastLookUp) = (null, null, null, null);
+        (_modelId, _reasonId, _alreadyInId, _comebackNote) = (0, 0, null, null);
+        await Reload();
+        if (_tagField is not null) await _tagField.FocusAsync();
+    }
+
+    private async Task ScanWithCamera()
+    {
+        var parameters = new DialogParameters<RepairScanDialog>
+        {
+            { d => d.IsAssetTag, District.CouldBeAssetTag },
+            { d => d.BatchDescription, BatchDescription() },
+            { d => d.OnBatchScan, CheckInScanned },
+        };
+        var dialog = await Dialogs.ShowAsync<RepairScanDialog>("Scan a barcode", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: string code })
+        {
+            _tag = code;
+            await LookUp();
+        }
+        await Reload();
+        StateHasChanged();
+    }
+
+    /// <summary>What each scan would be checked in as, or null until the form says enough.</summary>
+    private string? BatchDescription()
+    {
+        var site = _sites.FirstOrDefault(s => s.Id == _siteId)?.Name;
+        var reason = _reasonId == OtherReason ? _otherReason : _reasons.FirstOrDefault(r => r.Id == _reasonId)?.Name;
+        if (site is null || string.IsNullOrWhiteSpace(reason) || _dateIn is null) return null;
+        return string.Join(", ", new[] { site, reason, string.IsNullOrWhiteSpace(_pickupPoint) ? null : $"from {_pickupPoint}" }.Where(t => t is not null));
+    }
+
+    private async Task<(bool Ok, string Message)> CheckInScanned(string tag)
+    {
+        var user = (await AuthState).User;
+        try
+        {
+            // Using what's already known, so a quick scan doesn't clear a device's serial number or model.
+            var known = await Repairs.LookUpAsync(tag, user);
+            var entry = new RepairCheckIn(tag, known?.SerialNumber, known?.ModelId, _siteId, _reasonId == OtherReason ? null : _reasonId, _reasonId == OtherReason ? _otherReason : null, _pickupPoint, DateOnly.FromDateTime(_dateIn ?? DateTime.Today));
+            await Repairs.CheckInAsync(entry, user);
+            await Reload();
+            StateHasChanged();
+            var note = ComebackNote(tag, known?.OutOfCirculation == true, known?.DeprovisionedOn);
+            return (true, note is null ? $"Checked in {tag}." : $"Checked in {tag}. {note}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private async Task Act(Func<ClaimsPrincipal, Task> action)
+    {
+        try
+        {
+            await action((await AuthState).User);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        await Reload();
+    }
+
+    private string? ComebackNote(string assetTag, bool outOfCirculation, DateOnly? deprovisionedOn) =>
+        deprovisionedOn is not null ? $"{assetTag} was deprovisioned in {District.DeviceConsoleName}, so it needs re-enrolling if it goes back in use."
+        : outOfCirculation ? $"{assetTag} was marked as can't be repaired. Checking it in puts it back in circulation."
+        : null;
+
+    private async Task SetStatus(RepairView repair, RepairStatus status)
+    {
+        await Act(user => Repairs.SetStatusAsync(repair.Id, status, Today, user));
+        WarnIfBackInUse(repair);
+    }
+
+    /// <summary>The deprovisioned date is cleared when a device comes back, so the warning comes from the earlier copy.</summary>
+    private void WarnIfBackInUse(RepairView before)
+    {
+        var now = _repairs?.FirstOrDefault(r => r.Id == before.Id);
+        if (before.DeprovisionedOn is not null && now?.DeprovisionedOn is null) Snackbar.Add($"{before.AssetTag} was deprovisioned in {District.DeviceConsoleName}, so it needs re-enrolling if it goes back in use.", Severity.Warning);
+    }
+
+    private Task MarkDeprovisioned(RepairView device) => Act(user => Repairs.MarkDeprovisionedAsync(device.DeviceId, Today, user));
+
+    private Task SetCompleted(RepairView repair, bool done) => SetStatus(repair, done ? RepairStatus.Completed : RepairStatus.InRepair);
+
+    private Task MarkUpdated(IReadOnlyCollection<RepairView> repairs) => Act(user => Repairs.MarkInventoryUpdatedAsync(repairs.Select(r => r.Id).ToList(), Today, user));
+
+    private async Task CopyTag(string text)
+    {
+        if (await JS.InvokeAsync<bool>("pcserv.copyText", text)) Snackbar.Add($"Copied {text}.", Severity.Success);
+        else Snackbar.Add($"Your browser didn't allow copying. Here it is to copy by hand: {text}", Severity.Warning);
+    }
+
+    private async Task DownloadList(string inventoryName, IReadOnlyCollection<RepairView> repairs)
+    {
+        var fileName = "inventory-" + new string(inventoryName.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()) + ".txt";
+        await JS.InvokeVoidAsync("pcserv.downloadText", fileName, RepairService.BarcodeList(repairs));
+    }
+
+    private async Task EditById(int id)
+    {
+        var repair = await Repairs.GetAsync(id, (await AuthState).User);
+        if (repair is not null) await Edit(repair);
+    }
+
+    private async Task Edit(RepairView repair)
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<RepairDialog>
+        {
+            { d => d.Repair, repair },
+            { d => d.Sites, _sites },
+            { d => d.Models, _models },
+            { d => d.Reasons, _reasons },
+            { d => d.History, (await Repairs.HistoryAsync(repair.DeviceId, user)).Where(r => r.Id != repair.Id).ToList() },
+            { d => d.OnSave, async edit =>
+                {
+                    try
+                    {
+                        await Repairs.UpdateAsync(repair.Id, edit, Today, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+            { d => d.OnClearInventory, () => Repairs.ClearInventoryUpdatedAsync(repair.Id, user) },
+            { d => d.OnClearDeprovisioned, () => Repairs.ClearDeprovisionedAsync(repair.DeviceId, user) },
+        };
+        var dialog = await Dialogs.ShowAsync<RepairDialog>($"Repair of {repair.AssetTag}", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        await Reload();
+        if (result is { Canceled: false }) WarnIfBackInUse(repair);
+        StateHasChanged();
+    }
+}

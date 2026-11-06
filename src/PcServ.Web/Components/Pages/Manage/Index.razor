@@ -1,0 +1,47 @@
+@page "/manage"
+
+<PageTitle>Manage · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Manage" Subtitle="Change the portal's base information. Pick what you'd like to edit." />
+
+<MudGrid Spacing="3">
+    @foreach (var card in Cards)
+    {
+        @if (card.AdminOnly)
+        {
+            <AuthorizeView Policy="@Policies.IsAdmin">
+                <MudItem xs="12" sm="6" lg="4">@CardView(card)</MudItem>
+            </AuthorizeView>
+        }
+        else
+        {
+            <MudItem xs="12" sm="6" lg="4">@CardView(card)</MudItem>
+        }
+    }
+</MudGrid>
+
+@code {
+    private record ManageCard(string Title, string Description, string Icon, string Href, bool AdminOnly = false);
+
+    private static readonly ManageCard[] Cards =
+    [
+        new("Edit links", "Add, change or remove links in the directory, and choose which ones are pinned.", Icons.Material.Outlined.Link, "links"),
+        new("Edit sites & buildings", "Add schools, update addresses and phone numbers, and list each site's buildings.", Icons.Material.Outlined.School, "sites"),
+        new("Approved vendors", "Keep the list of vendors people can choose when they create an order.", Icons.Material.Outlined.Storefront, "manage/vendors"),
+        new("Repair lists", "Keep the Chromebook models and repair reasons people pick from.", Icons.Material.Outlined.Checklist, "manage/repair-lists"),
+        new("Align layers", "Line up Wi-Fi maps with each school's plans, so network layers show on those plans too.", Icons.Material.Outlined.Layers, "manage/alignments"),
+        new("Audit log", "See who changed what, and when.", Icons.Material.Outlined.History, "manage/audit"),
+        new("Import maps", "Bring in many site maps at once from an import list.", Icons.Material.Outlined.UploadFile, "manage/import", AdminOnly: true),
+        new("Users", "Create accounts, set roles and reset passwords.", Icons.Material.Outlined.People, "manage/users", AdminOnly: true),
+        new("Settings", "Organization name, test version and where data is stored.", Icons.Material.Outlined.Settings, "manage/settings", AdminOnly: true),
+    ];
+
+    private static RenderFragment CardView(ManageCard card) =>
+        @<a href="@card.Href" class="manage-card-link">
+            <MudPaper Outlined="true" Class="manage-card pa-5 h-100">
+                <div class="manage-card-icon"><MudIcon Icon="@card.Icon" Size="Size.Large" /></div>
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-3">@card.Title</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">@card.Description</MudText>
+            </MudPaper>
+        </a>;
+}

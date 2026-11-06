@@ -1,0 +1,42 @@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField @bind-Value="_model.Name" @bind-Value:after="() => _error = null" Label="Name" Variant="Variant.Outlined" MaxLength="120" AutoFocus="true" Immediate="true" />
+            <MudTextField @bind-Value="_model.JobTitle" Label="Job title (optional)" Variant="Variant.Outlined" MaxLength="120" Immediate="true" />
+            <MudTextField @bind-Value="_model.Room" Label="Room (optional)" Variant="Variant.Outlined" MaxLength="60" Immediate="true"
+                          HelperText="Fills in the room on an order for this person." />
+            <MudTextField @bind-Value="_model.Phone" Label="Phone (optional)" Variant="Variant.Outlined" MaxLength="40" Immediate="true" />
+            <MudTextField @bind-Value="_model.Email" Label="Email (optional)" Variant="Variant.Outlined" MaxLength="200" Immediate="true" />
+            <MudSwitch T="bool" @bind-Value="_model.IsOrderContact" Color="Color.Primary" Label="Usual contact for orders" />
+            <MudText Typo="Typo.body2">The person who handles ordering at this site. New orders fill in their name, and you can change it on each order.</MudText>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public SiteStaffMember Member { get; set; } = new();
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<SiteStaffMember, Task<string?>>? OnSave { get; set; }
+
+    private SiteStaffMember _model = new();
+    private string? _error;
+
+    protected override void OnInitialized() => _model = Member.Copy<SiteStaffMember>();
+
+    private async Task Save()
+    {
+        _error = OnSave is null ? null : await OnSave(_model);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

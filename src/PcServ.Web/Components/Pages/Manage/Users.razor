@@ -1,0 +1,207 @@
+@page "/manage/users"
+@attribute [Authorize(Policy = Policies.IsAdmin)]
+@inject UserAdminService UserAdmin
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SettingsService Settings
+@inject UserManager<ApplicationUser> UserManager
+@using Microsoft.AspNetCore.Identity
+
+<PageTitle>Users · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Users" Subtitle="Create accounts and choose what each person can do.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd" OnClick="CreateUser">Add user</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_users is not null && _users.Count(u => u.Role == Roles.Admin && !u.IsDisabled) == 1)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-4">
+        There's only one active Admin. If that person leaves or forgets their password, nobody here can manage accounts. Consider making a second person an Admin.
+    </MudAlert>
+}
+
+<MudExpansionPanels Outlined="true" Class="mb-4" Elevation="0">
+    <MudExpansionPanel Text="What can each role do?">
+        @foreach (var role in Roles.All)
+        {
+            <MudText Typo="Typo.body2" Class="mb-1"><strong>@role:</strong> @Roles.Describe(role)</MudText>
+        }
+    </MudExpansionPanel>
+</MudExpansionPanels>
+
+@if (_users is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudTable Items="_users" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Username</MudTh>
+            <MudTh>Role</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Last sign-in</MudTh>
+            <MudTh Style="text-align:right">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                @context.DisplayName
+                @if (context.Id == _currentUserId)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Primary">You</MudChip>
+                }
+            </MudTd>
+            <MudTd DataLabel="Username">@context.UserName</MudTd>
+            <MudTd DataLabel="Role">@(context.Role ?? "None")</MudTd>
+            <MudTd DataLabel="Status">
+                @if (context.IsDisabled)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">Disabled</MudChip>
+                }
+                else if (context.MustChangePassword)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Temporary password</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Active</MudChip>
+                }
+                @if (context.HasTwoFactor)
+                {
+                    <MudTooltip Text="Two-factor sign-in is on">
+                        <MudIcon Icon="@Icons.Material.Outlined.VerifiedUser" Size="Size.Small" Color="Color.Success" Class="ml-1" />
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd DataLabel="Last sign-in">
+                @if (context.LastLoginAt is { } last)
+                {
+                    <LocalTime Value="last" Format="MMM d, yyyy" />
+                }
+                else
+                {
+                    <span class="mud-text-secondary">Never</span>
+                }
+            </MudTd>
+            <MudTd DataLabel="Actions" Style="text-align:right">
+                <MudTooltip Text="Edit name or role">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" aria-label="Edit user" OnClick="() => EditUser(context)" />
+                </MudTooltip>
+                <MudTooltip Text="Reset password">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Key" Size="Size.Small" aria-label="Reset password" OnClick="() => ResetPassword(context)" />
+                </MudTooltip>
+                @if (context.Id != _currentUserId)
+                {
+                    <MudTooltip Text="@(context.IsDisabled ? "Re-enable account" : "Disable account")">
+                        <MudIconButton Icon="@(context.IsDisabled ? Icons.Material.Outlined.LockOpen : Icons.Material.Outlined.Block)" Size="Size.Small"
+                                       Color="@(context.IsDisabled ? Color.Success : Color.Error)"
+                                       aria-label="@(context.IsDisabled ? "Re-enable account" : "Disable account")"
+                                       OnClick="() => ToggleDisabled(context)" />
+                    </MudTooltip>
+                }
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">
+        Accounts are disabled rather than deleted, so the audit log keeps an accurate history.
+    </MudText>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<UserRow>? _users;
+    private string? _currentUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentUserId = UserManager.GetUserId((await AuthState).User);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _users = await UserAdmin.ListAsync();
+
+    private async Task CreateUser()
+    {
+        var model = await Dialogs.EditAsync<UserDialog, UserFormModel>("Add user", new UserFormModel());
+        if (model is null) return;
+
+        await RunAsync(async () =>
+        {
+            var password = await UserAdmin.CreateAsync(model.UserName, model.DisplayName, model.Role);
+            await ShowPasswordAsync(model.UserName, password);
+        });
+    }
+
+    private async Task EditUser(UserRow user)
+    {
+        var model = await Dialogs.EditAsync<UserDialog, UserFormModel>("Edit user", new UserFormModel
+        {
+            Id = user.Id, DisplayName = user.DisplayName, UserName = user.UserName, Role = user.Role ?? Roles.Viewer,
+        });
+        if (model is null) return;
+
+        await RunAsync(async () =>
+        {
+            await UserAdmin.UpdateAsync(user.Id, model.DisplayName, model.Role, _currentUserId!);
+            Snackbar.Add(await Settings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        });
+    }
+
+    private async Task ResetPassword(UserRow user)
+    {
+        var self = user.Id == _currentUserId;
+        var message = self
+            ? "Reset your own password? To simply change it, use My account instead."
+            : $"Give {user.DisplayName} a new temporary password? Their current password will stop working.";
+        if (!await Dialogs.ConfirmAsync("Reset password", message, "Reset password", danger: true)) return;
+
+        await RunAsync(async () =>
+        {
+            var password = await UserAdmin.ResetPasswordAsync(user.Id);
+            await ShowPasswordAsync(user.UserName, password);
+        });
+    }
+
+    private async Task ToggleDisabled(UserRow user)
+    {
+        var disable = !user.IsDisabled;
+        if (disable && !await Dialogs.ConfirmAsync("Disable account",
+                $"Disable {user.DisplayName}'s account? They'll be signed out and won't be able to sign in until re-enabled.",
+                "Disable", danger: true)) return;
+
+        await RunAsync(async () =>
+        {
+            await UserAdmin.SetDisabledAsync(user.Id, disable, _currentUserId!);
+            Snackbar.Add(disable ? $"{user.DisplayName} has been disabled." : $"{user.DisplayName} has been re-enabled.", Severity.Info);
+        });
+    }
+
+    private async Task ShowPasswordAsync(string userName, string password)
+    {
+        var parameters = new DialogParameters<TempPasswordDialog>
+        {
+            { d => d.UserName, userName },
+            { d => d.Password, password },
+        };
+        var dialog = await Dialogs.ShowAsync<TempPasswordDialog>("Temporary password", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, BackdropClick = false, CloseOnEscapeKey = false });
+        await dialog.Result;
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (UserAdminException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        await LoadAsync();
+    }
+}

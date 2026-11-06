@@ -1,0 +1,25 @@
+<MudNavMenu Class="py-2" Bordered="true" aria-label="Main">
+    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.Dashboard">Overview</MudNavLink>
+    <MudNavLink Href="links" Icon="@Icons.Material.Outlined.Link">Links</MudNavLink>
+    <MudNavLink Href="sites" Icon="@Icons.Material.Outlined.School">Sites</MudNavLink>
+    <MudNavLink Href="maps" Icon="@Icons.Material.Outlined.Map">Site maps</MudNavLink>
+    <MudNavLink Href="wiki" Icon="@Icons.Material.Outlined.MenuBook">Wiki</MudNavLink>
+    <AuthorizeView Policy="@Policies.CanEdit">
+        <MudNavLink Href="orders" Icon="@Icons.Material.Outlined.LocalShipping">Orders</MudNavLink>
+        <MudNavLink Href="repairs" Icon="@Icons.Material.Outlined.Build">Repairs</MudNavLink>
+    </AuthorizeView>
+
+    <AuthorizeView Policy="@Policies.CanManage">
+        <MudText Typo="Typo.overline" Class="nav-section">Manage</MudText>
+        <MudNavLink Href="manage" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.Tune">Manage home</MudNavLink>
+        <MudNavLink Href="manage/vendors" Icon="@Icons.Material.Outlined.Storefront">Approved vendors</MudNavLink>
+        <MudNavLink Href="manage/repair-lists" Icon="@Icons.Material.Outlined.Checklist">Repair lists</MudNavLink>
+        <MudNavLink Href="manage/alignments" Icon="@Icons.Material.Outlined.Layers">Align layers</MudNavLink>
+        <MudNavLink Href="manage/audit" Icon="@Icons.Material.Outlined.History">Audit log</MudNavLink>
+        <AuthorizeView Policy="@Policies.IsAdmin" Context="adminContext">
+            <MudNavLink Href="manage/import" Icon="@Icons.Material.Outlined.UploadFile">Import maps</MudNavLink>
+            <MudNavLink Href="manage/users" Icon="@Icons.Material.Outlined.People">Users</MudNavLink>
+            <MudNavLink Href="manage/settings" Icon="@Icons.Material.Outlined.Settings">Settings</MudNavLink>
+        </AuthorizeView>
+    </AuthorizeView>
+</MudNavMenu>

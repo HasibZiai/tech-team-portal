@@ -1,0 +1,34 @@
+# Run the portal on any PC with Docker, for testing or a demo:
+#
+#   docker compose up -d
+#
+# Then open http://localhost:8080. Data is kept in a Docker volume between runs.
+#
+# This is plain HTTP and only reachable from this computer, on purpose.
+# To host it for other people, use deploy/docker-compose.yml, which adds HTTPS.
+
+name: pcserv-local
+
+services:
+  web:
+    build: .
+    image: ghcr.io/hasibziai/tech-team-portal:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      TZ: ${TZ:-UTC}
+      PcServ__District__InventoryName: ${PCSERV_INVENTORY_NAME:-}
+      PcServ__District__InventoryUrl: ${PCSERV_INVENTORY_URL:-}
+      PcServ__District__DeviceConsoleName: ${PCSERV_DEVICE_CONSOLE_NAME:-}
+      PcServ__District__DeviceConsoleUrl: ${PCSERV_DEVICE_CONSOLE_URL:-}
+      PcServ__District__AssetTagDigits: ${PCSERV_ASSET_TAG_DIGITS:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - pcserv-data:/app/data
+
+volumes:
+  pcserv-data:

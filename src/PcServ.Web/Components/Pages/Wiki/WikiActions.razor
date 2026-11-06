@@ -1,0 +1,52 @@
+@* The sidebar's buttons: new pages for Techs and above, and arranging sections for Managers and above. *@
+@inject WikiService Wiki
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<div class="d-flex flex-column gap-2 mt-3">
+    <AuthorizeView Policy="@Policies.CanEdit">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="NewPage">New page</MudButton>
+    </AuthorizeView>
+    <AuthorizeView Policy="@Policies.CanManage">
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="ManageSections">Manage sections</MudButton>
+    </AuthorizeView>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    [Parameter] public IReadOnlyList<WikiSectionView> Tree { get; set; } = [];
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private async Task NewPage()
+    {
+        var user = (await AuthState).User;
+        var created = 0;
+        var parameters = new DialogParameters<WikiNewPageDialog>
+        {
+            { d => d.Sections, Tree },
+            { d => d.OnSave, async (sectionId, title, role) =>
+                {
+                    try
+                    {
+                        created = await Wiki.CreatePageAsync(sectionId, title, role, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<WikiNewPageDialog>("New page", parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false } && created != 0) Nav.NavigateTo($"wiki/{created}?edit=true");
+    }
+
+    private async Task ManageSections()
+    {
+        var dialog = await Dialogs.ShowAsync<WikiSectionsDialog>("Manage sections", new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        await dialog.Result;
+        await OnChanged.InvokeAsync();
+    }
+}

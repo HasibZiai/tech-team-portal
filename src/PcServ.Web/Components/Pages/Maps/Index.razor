@@ -1,0 +1,134 @@
+@page "/maps"
+@using PcServ.Web.Services.Maps
+@inject SiteMapService Maps
+@inject AppDbFactory DbFactory
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+@inject NavigationManager Navigation
+
+<PageTitle>Site maps · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Site maps" Subtitle="Maps for each school, with layers you can switch on and off.">
+    <Actions>
+        <MudTextField @bind-Value="_search" Placeholder="Search maps" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" Class="search-box" />
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.UploadFile" OnClick="UploadMap">Add map</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (_maps is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_maps.Count == 0)
+{
+    <EmptyState Title="No maps yet" Icon="@Icons.Material.Outlined.Map">
+        <AuthorizeView Policy="@Policies.CanManage">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.UploadFile" OnClick="UploadMap">Add the first map</MudButton>
+        </AuthorizeView>
+    </EmptyState>
+}
+else
+{
+    var groups = Filtered().GroupBy(m => m.SiteName).ToList();
+    if (groups.Count == 0)
+    {
+        <MudText Color="Color.Secondary">No maps match "@_search".</MudText>
+    }
+    @foreach (var group in groups)
+    {
+        <section class="link-section">
+            <div class="link-section-header">
+                <MudText Typo="Typo.h6" HtmlTag="h2">@group.Key</MudText>
+            </div>
+            <MudGrid Spacing="2">
+                @foreach (var map in group)
+                {
+                    <MudItem xs="12" sm="6" lg="4">
+                        <MudPaper Outlined="true" Class="link-card">
+                            <a href="maps/@map.Id" class="link-card-body">
+                                <div class="d-flex align-center gap-2">
+                                    <MudIcon Icon="@Icons.Material.Outlined.Map" Size="Size.Small" Color="Color.Primary" />
+                                    <MudText Typo="Typo.subtitle1" Class="link-title">@map.Name</MudText>
+                                </div>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">@Describe(map)</MudText>
+                            </a>
+                            <AuthorizeView Policy="@Policies.CanManage">
+                                <div class="link-card-actions">
+                                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Delete" Color="Color.Error"
+                                                   aria-label="@($"Delete {map.Name}")" OnClick="() => DeleteMap(map)" />
+                                </div>
+                            </AuthorizeView>
+                        </MudPaper>
+                    </MudItem>
+                }
+            </MudGrid>
+        </section>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<MapSummary>? _maps;
+    private string? _search;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync() => _maps = await Maps.ListAsync((await AuthState).User);
+
+    private IEnumerable<MapSummary> Filtered()
+    {
+        if (string.IsNullOrWhiteSpace(_search)) return _maps!;
+        var term = _search.Trim();
+        return _maps!.Where(m => m.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                 || m.SiteName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                 || (m.BuildingName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+    }
+
+    private static string Describe(MapSummary map)
+    {
+        var parts = new List<string> { map.Kind == SiteMapKind.FloorPlan ? "Floor plan" : map.Kind == SiteMapKind.SitePlan ? "Site plan" : "Reference map" };
+        if (map.BuildingName is not null) parts.Add(map.BuildingName);
+        if (map.Floor is not null) parts.Add($"Floor {map.Floor}");
+        if (map.LayerCount > 0) parts.Add(map.LayerCount == 1 ? "1 layer" : $"{map.LayerCount} layers");
+        return string.Join(" · ", parts);
+    }
+
+    private async Task UploadMap()
+    {
+        await using var db = await DbFactory.CreateAsync();
+        var sites = await db.Sites.AsNoTracking().Include(s => s.Buildings)
+            .Where(s => s.IsActive).OrderBy(s => s.SortOrder).ThenBy(s => s.Name).ToListAsync();
+
+        if (sites.Count == 0)
+        {
+            Snackbar.Add("Add a site first. Maps belong to a site.", Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<MapUploadDialog> { { d => d.Sites, sites } };
+        var dialog = await Dialogs.ShowAsync<MapUploadDialog>("Add map", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is not { Canceled: false, Data: MapUploadResult uploaded }) return;
+
+        var message = uploaded.LabelCount + uploaded.NoteCount > 0
+            ? $"Map added with {uploaded.LabelCount} room label(s) imported."
+            : "Map added.";
+        Snackbar.Add(message, Severity.Success);
+        if (uploaded.PageCount > 1) Snackbar.Add($"That PDF has {uploaded.PageCount} pages. Only the first was used.", Severity.Warning);
+        Navigation.NavigateTo($"maps/{uploaded.MapId}");
+    }
+
+    private async Task DeleteMap(MapSummary map)
+    {
+        if (!await Dialogs.ConfirmAsync("Delete map", $"Delete \"{map.Name}\" and all of its layers? This can't be undone.", "Delete", danger: true)) return;
+        await Maps.DeleteAsync(map.Id);
+        Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Deleted), Severity.Info);
+        await LoadAsync();
+    }
+}

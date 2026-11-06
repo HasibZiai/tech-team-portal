@@ -1,0 +1,96 @@
+@page "/Account/Manage"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PcServ.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Profile · Tech Team Portal</PageTitle>
+
+<h2 class="h5">Profile</h2>
+<StatusMessage />
+
+<div class="row">
+    <div class="col-xl-8">
+        <EditForm Model="Input" FormName="profile" OnValidSubmit="OnValidSubmitAsync" method="post">
+            <DataAnnotationsValidator />
+            <div class="form-floating mb-3">
+                <input type="text" value="@username" id="username" class="form-control" placeholder="Username" disabled />
+                <label for="username" class="form-label">Username</label>
+            </div>
+            <div class="form-floating mb-3">
+                <input type="text" value="@role" id="role" class="form-control" placeholder="Role" disabled />
+                <label for="role" class="form-label">Role (set by an admin)</label>
+            </div>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.DisplayName" id="Input.DisplayName" class="form-control" placeholder="Your name" />
+                <label for="Input.DisplayName" class="form-label">Display name</label>
+                <ValidationMessage For="() => Input.DisplayName" class="text-danger" />
+            </div>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private ApplicationUser? user;
+    private string? username;
+    private string? role;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        username = user.UserName;
+        role = HttpContext.User.PrimaryRole() ?? "None";
+        Input.DisplayName ??= user.DisplayName;
+    }
+
+    private async Task OnValidSubmitAsync()
+    {
+        if (user is null)
+        {
+            RedirectManager.RedirectToInvalidUser(UserManager, HttpContext);
+            return;
+        }
+
+        var newName = Input.DisplayName!.Trim();
+        if (newName != user.DisplayName)
+        {
+            user.DisplayName = newName;
+            var result = await UserManager.UpdateAsync(user);
+            if (!result.Succeeded)
+            {
+                RedirectManager.RedirectToCurrentPageWithStatus("Error: Couldn't update your profile.", HttpContext);
+                return;
+            }
+        }
+
+        // Refresh the sign-in cookie so the new name shows everywhere.
+        await SignInManager.RefreshSignInAsync(user);
+        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated.", HttpContext);
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Enter your name."), MaxLength(120)]
+        [Display(Name = "Display name")]
+        public string? DisplayName { get; set; }
+    }
+}

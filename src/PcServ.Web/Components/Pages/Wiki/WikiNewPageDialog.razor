@@ -1,0 +1,47 @@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudTextField @bind-Value="_title" @bind-Value:after="() => _error = null" Label="Page title" Variant="Variant.Outlined" MaxLength="150" AutoFocus="true" Immediate="true" />
+            <MudSelect T="int" @bind-Value="_sectionId" Label="Section" Variant="Variant.Outlined" ToStringFunc="@(id => Sections.FirstOrDefault(s => s.Id == id)?.Name ?? "")">
+                @foreach (var section in Sections)
+                {
+                    <MudSelectItem T="int" Value="section.Id">@section.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" @bind-Value="_role" Label="Who can read it" Variant="Variant.Outlined">
+                <MudSelectItem T="string" Value="@Roles.Viewer">Everyone</MudSelectItem>
+                <MudSelectItem T="string" Value="@Roles.Tech">Techs and above</MudSelectItem>
+            </MudSelect>
+            <MudText Typo="Typo.body2">Nobody else sees it until you publish it. Don't put passwords in the wiki.</MudText>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Create page</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public IReadOnlyList<WikiSectionView> Sections { get; set; } = [];
+
+    /// <summary>Tries the change and returns an error to show, or null if it worked.</summary>
+    [Parameter] public Func<int, string?, string, Task<string?>>? OnSave { get; set; }
+
+    private string? _title, _error;
+    private int _sectionId;
+    private string _role = Roles.Viewer;
+
+    protected override void OnInitialized() => _sectionId = Sections.FirstOrDefault()?.Id ?? 0;
+
+    private async Task Save()
+    {
+        _error = OnSave is null ? null : await OnSave(_sectionId, _title, _role);
+        if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

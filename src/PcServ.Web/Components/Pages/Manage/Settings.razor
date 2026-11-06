@@ -1,0 +1,125 @@
+@page "/manage/settings"
+@attribute [Authorize(Policy = Policies.IsAdmin)]
+@inject SettingsService AppSettings
+@inject TestVersion Test
+@inject TestVersionManager TestManager
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject IConfiguration Configuration
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Settings · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Settings" Subtitle="App-wide options. Only admins can see this page." />
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="6">
+        <MudPaper Outlined="true" Class="pa-5 h-100">
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Outlined.Business" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" HtmlTag="h2">Organization</MudText>
+            </div>
+            <MudTextField @bind-Value="_orgName" Label="Team or organization name" Variant="Variant.Outlined" Class="mt-3"
+                          HelperText="Shown on the About page." />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="SaveOrgName">Save</MudButton>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudPaper Outlined="true" Class="pa-5 h-100">
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Outlined.Science" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" HtmlTag="h2">Test version</MudText>
+            </div>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">
+                Shows you a separate copy of the portal filled with made-up data, for demos or for trying things out.
+                Changes there don't affect real records, and only your account switches. Everyone else keeps seeing real data. User accounts and these Settings stay real.
+            </MudText>
+            <MudSwitch T="bool" Value="_testVersion" ValueChanged="SetTestVersion" Disabled="_testBusy" Color="Color.Primary" Class="mt-3" Label="Show test version" />
+            @if (_testBusy)
+            {
+                <MudText Typo="Typo.body2" role="status" Class="mt-1">Setting up the test data. This can take a moment.</MudText>
+            }
+            @if (_testVersion)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Class="mt-3 d-block" Disabled="_testBusy" OnClick="ResetTestData">Reset test data</MudButton>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudPaper Outlined="true" Class="pa-5 h-100">
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Outlined.Backup" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" HtmlTag="h2">Storage & backups</MudText>
+            </div>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">
+                Everything the portal saves is in one folder. Back up this folder (or the whole VM) regularly.
+            </MudText>
+            <MudTextField Value="_dataDirectory" Label="Data folder" Variant="Variant.Outlined" ReadOnly="true" Class="mt-3" />
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+<div class="d-flex align-center flex-wrap gap-2 mt-4">
+    <MudSwitch T="bool" Value="_personality" ValueChanged="SetPersonality" Size="Size.Small" Color="Color.Primary" Label="Personality Core" />
+    <MudText Typo="Typo.caption">Adds dry humor to greetings and messages.</MudText>
+</div>
+
+@code {
+    private bool _personality;
+    private string? _orgName;
+    private bool _testVersion;
+    private bool _testBusy;
+    private string _dataDirectory = "";
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _personality = await AppSettings.IsPersonalityEnabledAsync();
+        _orgName = await AppSettings.GetAsync(SettingKeys.OrganizationName);
+        _dataDirectory = Path.GetFullPath(Configuration["PcServ:DataDirectory"] ?? "App_Data", Environment.ContentRootPath);
+
+        _testVersion = await Test.IsOnAsync((await AuthState).User);
+    }
+
+
+    private async Task<string> CurrentUserAsync() => (await AuthState).User.Identity?.Name ?? "unknown";
+
+    private async Task SetPersonality(bool enabled)
+    {
+        _personality = enabled;
+        await AppSettings.SetAsync(SettingKeys.PersonalityCore, enabled.ToString().ToLowerInvariant(), await CurrentUserAsync());
+        Snackbar.Add(enabled ? "Personality Core installed. You'll regret this." : "Personality Core removed. Professional mode on.", Severity.Info);
+    }
+
+    private async Task SaveOrgName()
+    {
+        await AppSettings.SetAsync(SettingKeys.OrganizationName, _orgName?.Trim(), await CurrentUserAsync());
+        Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+    }
+
+    private async Task SetTestVersion(bool on)
+    {
+        _testBusy = true;
+        StateHasChanged();
+        var user = (await AuthState).User;
+        if (on) await TestManager.TurnOnAsync(user);
+        else await TestManager.TurnOffAsync(user);
+
+        // A full reload, so everything on screen comes from the newly chosen data.
+        Nav.NavigateTo("", forceLoad: true);
+    }
+
+    private async Task ResetTestData()
+    {
+        if (!await Dialogs.ConfirmAsync("Reset test data", "Throw away everything in the test version and start again? Real records aren't affected.", "Reset", danger: true)) return;
+        _testBusy = true;
+        StateHasChanged();
+        await TestManager.ResetAsync((await AuthState).User);
+        _testBusy = false;
+        Snackbar.Add("The test data has been reset.", Severity.Success);
+    }
+}

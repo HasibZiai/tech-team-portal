@@ -1,0 +1,436 @@
+@page "/wiki/{Id:int}"
+@using PcServ.Web.Services.Maps
+@implements IAsyncDisposable
+@inject WikiService Wiki
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject IAuthorizationService Authorization
+@inject NavigationManager Nav
+@inject SettingsService AppSettings
+
+<PageTitle>@(_page?.Title ?? "Wiki") · Tech Team Portal</PageTitle>
+
+@if (_loaded && _page is null)
+{
+    <EmptyState Title="Page not found" Icon="@Icons.Material.Outlined.MenuBook">
+        <MudButton Href="wiki" Variant="Variant.Filled" Color="Color.Primary">Back to the wiki</MudButton>
+    </EmptyState>
+}
+else if (_page is not null)
+{
+    <WikiShell Tree="_tree" CurrentPageId="Id" Toc="@(!_editing && _page.Headings.Count > 0 ? TocContent : null)">
+        <Actions>
+            <WikiActions Tree="_tree" OnChanged="Reload" />
+        </Actions>
+        <ChildContent>
+            @if (_editing)
+            {
+                <div class="wiki-edit-bar">
+                    <div class="d-flex flex-wrap gap-2 align-center">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_publishing" OnClick="() => Publish(false)">Publish</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="StopEditing">Stop editing</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="DiscardDraft">Discard draft</MudButton>
+                    </div>
+                    <span class="wiki-save-status" role="status">@_saveStatus</span>
+                </div>
+                @if (_resumed)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">You're continuing a draft you saved earlier. Readers still see the published page.</MudAlert>
+                }
+                @if (_newerAvailable)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">Someone has published a newer version since you started this draft. You'll be asked before yours replaces it.</MudAlert>
+                }
+                <MudTextField T="string" @bind-Value="_title" Label="Page title" Variant="Variant.Outlined" MaxLength="150" Immediate="true" DebounceInterval="800" OnDebounceIntervalElapsed="TitleChanged" Class="mb-2" />
+                <div class="wiki-toolbar" @ref="_toolbarRef"></div>
+                <div class="wiki-editor" @ref="_editorRef"></div>
+            }
+            else
+            {
+                <article>
+                    <p class="wiki-breadcrumb">@_page.SectionName</p>
+                    <div class="d-flex flex-wrap justify-space-between align-start gap-2">
+                        <h1 class="wiki-title">@_page.Title</h1>
+                        @if (_canEdit)
+                        {
+                            <div class="d-flex flex-wrap gap-2">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Edit" OnClick="StartEditing">Edit</MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="ShowHistory">History</MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" OnClick="ShowSettings">Page settings</MudButton>
+                            </div>
+                        }
+                    </div>
+                    <p class="wiki-meta">
+                        @if (_page.PublishedAt is { } at)
+                        {
+                            <span>Last updated <LocalTime Value="at" Format="MMM d, yyyy" /> by @_page.PublishedBy</span>
+                        }
+                        else
+                        {
+                            <span>Not published yet, so only Techs and above can see this page.</span>
+                        }
+                        @if (_page.MinimumRole != Roles.Viewer)
+                        {
+                            <span> · Techs and above only</span>
+                        }
+                    </p>
+                    @if (_page.CurrentVersion == 0)
+                    {
+                        <MudText>There's nothing here yet. Choose Edit to start writing.</MudText>
+                    }
+                    <div class="wiki-content" @ref="_articleRef" @key="_page.CurrentVersion">@((MarkupString)_page.Html)</div>
+                    <nav class="wiki-pager" aria-label="Previous and next pages">
+                        @if (_page.Previous is { } previous)
+                        {
+                            <a href="@($"wiki/{previous.Id}")" class="wiki-pager-link"><span class="repair-minor">Previous</span><strong>@previous.Title</strong></a>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                        @if (_page.Next is { } next)
+                        {
+                            <a href="@($"wiki/{next.Id}")" class="wiki-pager-link wiki-pager-next"><span class="repair-minor">Next</span><strong>@next.Title</strong></a>
+                        }
+                    </nav>
+                </article>
+            }
+        </ChildContent>
+    </WikiShell>
+}
+else
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery(Name = "edit")] private bool? StartInEdit { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private WikiPageView? _page;
+    private List<WikiSectionView> _tree = [];
+    private bool _loaded, _canEdit, _canManage;
+    private int _loadedId;
+
+    private bool _editing, _needsEditor, _publishing, _resumed, _newerAvailable, _needsEnhance;
+    private string? _title, _saveStatus;
+    private int _baseVersion;
+    private string _startHtml = "";
+    private ElementReference _toolbarRef, _editorRef, _articleRef;
+    private IJSObjectReference? _editorModule, _pageModule, _editor;
+    private DotNetObjectReference<PageView>? _self;
+
+    private RenderFragment TocContent => @<nav aria-label="On this page">
+        <h2 class="wiki-toc-title">On this page</h2>
+        <ul>
+            @foreach (var heading in _page!.Headings)
+            {
+                <li class="@(heading.Level == 3 ? "wiki-toc-sub" : "")">
+                    <a href="@($"wiki/{Id}#{heading.Id}")" @onclick="() => GoToHeading(heading.Id)" @onclick:preventDefault>@heading.Text</a>
+                </li>
+            }
+        </ul>
+    </nav>;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded && _loadedId == Id) return;
+
+        // Moving to another page from the sidebar, so anything unsaved goes first.
+        await CloseEditor();
+        _editing = false;
+        _loadedId = Id;
+        var user = (await AuthState).User;
+        _canEdit = (await Authorization.AuthorizeAsync(user, Policies.CanEdit)).Succeeded;
+        _canManage = (await Authorization.AuthorizeAsync(user, Policies.CanManage)).Succeeded;
+        await Reload();
+        _loaded = true;
+        if (_page is not null && _canEdit && (StartInEdit == true)) await StartEditing();
+    }
+
+    private async Task Reload()
+    {
+        var user = (await AuthState).User;
+        _tree = await Wiki.TreeAsync(user);
+        _page = await Wiki.GetPageAsync(Id, user);
+        _needsEnhance = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_needsEditor && _editing)
+        {
+            _needsEditor = false;
+            _self ??= DotNetObjectReference.Create(this);
+            _editorModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./lib/tiptap/wiki-editor.js");
+            _editor = await _editorModule.InvokeAsync<IJSObjectReference>("createEditor", _toolbarRef, _editorRef, _startHtml, _self);
+        }
+        else if (_needsEnhance && !_editing && _page is not null)
+        {
+            _needsEnhance = false;
+            _pageModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/wiki.js");
+            await _pageModule.InvokeVoidAsync("enhance", _articleRef);
+        }
+    }
+
+    private async Task GoToHeading(string id)
+    {
+        _pageModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/wiki.js");
+        await _pageModule.InvokeVoidAsync("scrollToHeading", id);
+    }
+
+    // ---- Editing ----
+
+    private async Task StartEditing()
+    {
+        var draft = await Wiki.GetDraftAsync(Id, (await AuthState).User);
+        _title = draft?.Title is { Length: > 0 } saved ? saved : _page!.Title;
+        _startHtml = draft?.Html ?? await PublishedHtml();
+        _baseVersion = draft?.BaseVersion ?? _page!.CurrentVersion;
+        _resumed = draft is not null;
+        _newerAvailable = draft is not null && draft.BaseVersion != _page!.CurrentVersion;
+        _saveStatus = draft is null ? null : "Draft saved";
+        _editing = true;
+        _needsEditor = true;
+        StateHasChanged();
+    }
+
+    /// <summary>Without the addresses added to headings for reading, so they don't end up saved in the page.</summary>
+    private async Task<string> PublishedHtml()
+    {
+        var versions = await Wiki.HistoryAsync(Id, (await AuthState).User);
+        return versions.FirstOrDefault(v => v.Number == _page!.CurrentVersion)?.Html ?? "";
+    }
+
+    [JSInvokable]
+    public void EditorChanging()
+    {
+        if (_saveStatus == "Saving...") return;
+        _saveStatus = "Saving...";
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public Task EditorSave(string html) => SaveDraft(html);
+
+    private async Task TitleChanged(string? _)
+    {
+        if (_editor is null) return;
+        await SaveDraft(await _editor.InvokeAsync<string>("getHtml"));
+    }
+
+    private async Task SaveDraft(string html)
+    {
+        try
+        {
+            await Wiki.SaveDraftAsync(Id, _title, html, _baseVersion, (await AuthState).User);
+            _saveStatus = $"Draft saved at {DateTime.Now:h:mm tt}";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _saveStatus = "Couldn't save your draft";
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private async Task CloseEditor()
+    {
+        if (_editor is null) return;
+        try
+        {
+            await _editor.InvokeVoidAsync("flush");
+            await _editor.InvokeVoidAsync("destroy");
+            await _editor.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser has gone, and its last save has already been made.
+        }
+        _editor = null;
+    }
+
+    /// <summary>A new page opens with ?edit=true. Once finished, a reload should show the page, not the editor again.</summary>
+    private void LeaveEditAddress()
+    {
+        if (StartInEdit == true) Nav.NavigateTo($"wiki/{Id}", replace: true);
+    }
+
+    private async Task StopEditing()
+    {
+        await CloseEditor();
+        _editing = false;
+        await Reload();
+        LeaveEditAddress();
+        Snackbar.Add("Your draft is saved, and only you can see it.", Severity.Info);
+    }
+
+    private async Task DiscardDraft()
+    {
+        if (!await Dialogs.ConfirmAsync("Discard draft", "Throw away your unpublished changes? The published page won't change.", "Discard", danger: true)) return;
+        if (_editor is not null) await _editor.InvokeVoidAsync("cancelSave");
+        await CloseEditor();
+        await Wiki.DiscardDraftAsync(Id, (await AuthState).User);
+        _editing = false;
+        await Reload();
+        LeaveEditAddress();
+    }
+
+    private async Task Publish(bool anyway)
+    {
+        if (_editor is null) return;
+        _publishing = true;
+        try
+        {
+            var user = (await AuthState).User;
+            await _editor.InvokeVoidAsync("cancelSave");
+            var html = await _editor.InvokeAsync<string>("getHtml");
+
+            // If this doesn't go ahead, the draft has to hold the latest words, because the waiting save was just stopped.
+            await Wiki.SaveDraftAsync(Id, _title, html, _baseVersion, user);
+            var result = await Wiki.PublishAsync(Id, _title, html, _baseVersion, anyway, user);
+            if (!result.Published)
+            {
+                _publishing = false;
+                var question = $"{result.NewerBy ?? "Someone"} published a newer version while you were working. If you publish, yours becomes the current page, and theirs stays in History. Publish anyway?";
+                if (await Dialogs.ConfirmAsync("Someone else published", question, "Publish anyway")) await Publish(true);
+                return;
+            }
+
+            await CloseEditor();
+            _editing = false;
+            await Reload();
+            LeaveEditAddress();
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _publishing = false;
+        }
+    }
+
+    [JSInvokable]
+    public async Task<string?> UploadImage(string fileName, IJSStreamReference file)
+    {
+        try
+        {
+            await using var stream = await file.OpenReadStreamAsync(MapPhotoService.MaxUploadBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            return (await Wiki.UploadImageAsync(fileName, memory.ToArray(), (await AuthState).User)).Url;
+        }
+        catch (Exception ex) when (ex is MapFileException or InvalidOperationException or IOException)
+        {
+            Snackbar.Add($"{fileName}: {ex.Message}", Severity.Error);
+            StateHasChanged();
+            return null;
+        }
+    }
+
+    [JSInvokable]
+    public async Task OpenImageLibrary()
+    {
+        var dialog = await Dialogs.ShowAsync<WikiImageDialog>("Add an image", new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: ValueTuple<string, string> chosen } && _editor is not null)
+        {
+            await _editor.InvokeVoidAsync("insertImage", chosen.Item1, chosen.Item2);
+        }
+    }
+
+    [JSInvokable]
+    public void PastedImagesSkipped(int count)
+    {
+        Snackbar.Add($"{count} image{(count == 1 ? " was" : "s were")} left out of what you pasted, because the wiki doesn't load images from other sites. Save {(count == 1 ? "it" : "them")} to your computer, then drag {(count == 1 ? "it" : "them")} in.", Severity.Warning);
+        StateHasChanged();
+    }
+
+    // ---- History and settings ----
+
+    private async Task ShowHistory()
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<WikiHistoryDialog>
+        {
+            { d => d.Versions, await Wiki.HistoryAsync(Id, user) },
+            { d => d.Current, _page!.CurrentVersion },
+        };
+        var dialog = await Dialogs.ShowAsync<WikiHistoryDialog>("Page history", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is not { Canceled: false, Data: int number }) return;
+        if (!await Dialogs.ConfirmAsync("Restore this version", $"Make version {number} the current page? It's added as a new version, so nothing is lost.", "Restore")) return;
+
+        try
+        {
+            await Wiki.RestoreAsync(Id, number, user);
+            await Reload();
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task ShowSettings()
+    {
+        var user = (await AuthState).User;
+        var parameters = new DialogParameters<WikiSettingsDialog>
+        {
+            { d => d.Sections, _tree },
+            { d => d.SectionId, _page!.SectionId },
+            { d => d.Role, _page.MinimumRole },
+            { d => d.CanDelete, _canManage },
+            { d => d.OnMove, async direction =>
+                {
+                    await Wiki.MovePageAsync(Id, direction, user);
+                    await Reload();
+                    StateHasChanged();
+                } },
+            { d => d.OnSave, async (sectionId, role) =>
+                {
+                    try
+                    {
+                        await Wiki.UpdateSettingsAsync(Id, sectionId, role, user);
+                        return null;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        return ex.Message;
+                    }
+                } },
+        };
+        var dialog = await Dialogs.ShowAsync<WikiSettingsDialog>("Page settings", parameters, new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: WikiSettingsDialog.WikiDeleteRequest })
+        {
+            var message = $"Delete \"{_page!.Title}\" and all {_page.CurrentVersion} of its version(s)? This can't be undone.";
+            if (!await Dialogs.ConfirmAsync("Delete page", message, "Delete", danger: true)) return;
+            await Wiki.DeletePageAsync(Id, user);
+            Nav.NavigateTo("wiki");
+            return;
+        }
+        await Reload();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await CloseEditor();
+            if (_editorModule is not null) await _editorModule.DisposeAsync();
+            if (_pageModule is not null) await _pageModule.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser has already gone.
+        }
+        _self?.Dispose();
+    }
+}

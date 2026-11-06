@@ -1,0 +1,67 @@
+@* The wiki's layout: pages on the left, the content, and "On this page" on the right. *@
+@inject NavigationManager Nav
+
+<div class="wiki-layout @(Toc is null ? "wiki-no-toc" : "")">
+    <div class="wiki-side">
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="wiki-nav-toggle" StartIcon="@Icons.Material.Filled.Menu" aria-expanded="@(_navOpen ? "true" : "false")" OnClick="() => _navOpen = !_navOpen">Wiki pages</MudButton>
+        <div class="wiki-nav @(_navOpen ? "wiki-nav-open" : "")">
+            <MudLink Href="wiki" Typo="Typo.h6" Underline="Underline.None" Color="Color.Inherit" Class="d-block mb-2">Wiki</MudLink>
+            <div role="search" class="mb-3">
+                <MudTextField T="string" @bind-Value="_query" Label="Search the wiki" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" OnKeyDown="SearchKey" />
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="mt-1" OnClick="Search">Search</MudButton>
+            </div>
+            <nav aria-label="Wiki pages">
+                @foreach (var section in Tree)
+                {
+                    <h2 class="wiki-nav-section">@section.Name</h2>
+                    <ul>
+                        @foreach (var entry in section.Pages)
+                        {
+                            <li>
+                                <a href="@($"wiki/{entry.Id}")" class="@(entry.Id == CurrentPageId ? "wiki-nav-current" : "")" aria-current="@(entry.Id == CurrentPageId ? "page" : null)">
+                                    @entry.Title
+                                    @if (!entry.IsPublished)
+                                    {
+                                        <span class="wiki-nav-tag">Draft</span>
+                                    }
+                                    else if (entry.MinimumRole != Roles.Viewer)
+                                    {
+                                        <span class="wiki-nav-tag">Techs</span>
+                                    }
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                }
+            </nav>
+            @Actions
+        </div>
+    </div>
+    <div class="wiki-main">@ChildContent</div>
+    @if (Toc is not null)
+    {
+        <aside class="wiki-toc" aria-label="On this page">@Toc</aside>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<WikiSectionView> Tree { get; set; } = [];
+    [Parameter] public int? CurrentPageId { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? Toc { get; set; }
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    private string? _query;
+    private bool _navOpen;
+
+    private async Task SearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private Task Search()
+    {
+        if (!string.IsNullOrWhiteSpace(_query)) Nav.NavigateTo($"wiki?q={Uri.EscapeDataString(_query.Trim())}");
+        return Task.CompletedTask;
+    }
+}

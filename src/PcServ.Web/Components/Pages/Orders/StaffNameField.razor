@@ -1,0 +1,16 @@
+@* A name that can be picked from a site's staff list or typed in, for people who aren't on the list. *@
+<MudAutocomplete T="string" Value="@Value" ValueChanged="ValueChanged" Label="@Label" HelperText="@HelperText" SearchFunc="Search"
+                 CoerceValue="true" CoerceText="false" ResetValueOnEmptyText="false" OpenOnFocus="true" Variant="Variant.Outlined" MaxLength="120" Class="@Class"
+                 AdornmentAriaLabel="@($"Show names for {Label}")" />
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? HelperText { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public IReadOnlyList<SiteStaffMember> Staff { get; set; } = [];
+
+    private Task<IEnumerable<string>> Search(string? text, CancellationToken _) => Task.FromResult(
+        Staff.Select(s => s.Name).Where(name => string.IsNullOrWhiteSpace(text) || name.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+}

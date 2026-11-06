@@ -1,0 +1,54 @@
+# Runs on every push and pull request: the tests, then a real Docker build and start-up check.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Run tests
+        run: dotnet test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the Compose files
+        run: |
+          docker compose config --quiet
+          PCSERV_HOSTNAME=pcserv.example.org docker compose -f deploy/docker-compose.yml config --quiet
+
+      - name: Build and start the container
+        run: docker compose up --build --detach --wait --wait-timeout 120
+
+      - name: Check it works as a brand-new install
+        run: |
+          curl --fail --silent --show-error http://localhost:8080/health
+          location=$(curl --silent --output /dev/null --write-out '%{redirect_url}' http://localhost:8080/)
+          echo "/ redirects to: $location"
+          [ "$location" = "http://localhost:8080/setup" ]
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/setup
+
+      - name: Check map rendering works inside the container
+        run: docker compose exec web dotnet PcServ.Web.dll --render-selftest
+
+      - name: Check data survives a restart
+        run: |
+          docker compose restart web
+          docker compose exec web ls -l /app/data/pcserv.db
+
+      - name: Show logs if anything failed
+        if: failure()
+        run: docker compose logs

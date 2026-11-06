@@ -1,0 +1,70 @@
+/* Styles for the sign-in and account pages (AccountLayout). */
+
+:root {
+    --pcs-blue: #12315C;
+    --pcs-ink: #0B1F3A;
+    --pcs-bg: #F4F6F9;
+}
+
+body {
+    background: var(--pcs-bg);
+    color: var(--pcs-ink);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.account-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+.account-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .9rem 1.5rem;
+    background: var(--pcs-ink);
+    color: #F5F7FA;
+}
+.account-topbar .brand { margin-left: 0; color: #F5F7FA; }
+.account-back { color: #E4EBF4; text-decoration: none; font-size: .9rem; }
+.account-back:hover { color: #fff; }
+
+.account-main { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 3rem 1rem; }
+
+.account-card {
+    width: 100%;
+    max-width: 440px;
+    padding: 2rem;
+    background: #fff;
+    border: 1px solid #dde3ea;
+    border-radius: 12px;
+    box-shadow: 0 4px 18px rgba(27, 39, 53, .06);
+}
+.account-card.wide { max-width: 960px; }
+
+.account-footer { text-align: center; padding: 1rem; font-size: .875rem; color: #3D4C5F; }
+
+.btn-primary { background-color: var(--pcs-blue); border-color: var(--pcs-blue); }
+.btn-primary:hover, .btn-primary:focus { background-color: #0B1F3A; border-color: #0B1F3A; }
+a, .btn-link { color: var(--pcs-blue); }
+.nav-pills .nav-link.active { background-color: var(--pcs-blue); }
+
+.form-control:focus, .form-check-input:focus, .btn:focus {
+    box-shadow: 0 0 0 .2rem rgba(18, 49, 92, .35);
+    border-color: var(--pcs-blue);
+}
+.form-floating > .form-control::placeholder { color: transparent; }
+
+@media (prefers-color-scheme: dark) {
+    :root { --pcs-bg: #0F1B2D; --pcs-ink: #0B1F3A; --bs-body-bg: #0F1B2D; --bs-body-color: #F1F5FA; }
+    body { color: #F1F5FA; }
+    .account-card { background: #18263B; border-color: #3A4B63; box-shadow: none; }
+    .form-control, .form-control:disabled { background-color: #0F1B2D; color: #F1F5FA; border-color: #8496AD; }
+    .form-control:focus { background-color: #0F1B2D; color: #F1F5FA; border-color: #9CC7FF; box-shadow: 0 0 0 .2rem rgba(156, 199, 255, .4); }
+    .form-check-input { background-color: #0F1B2D; border-color: #8496AD; }
+    .form-floating > label { color: #C9D4E2; }
+    .text-secondary { color: #C9D4E2 !important; }
+    .account-footer { color: #C9D4E2; }
+    a, .btn-link { color: #9CC7FF; }
+    .btn-primary { background-color: #9CC7FF; border-color: #9CC7FF; color: #0B1F3A; }
+    .btn-primary:hover, .btn-primary:focus { background-color: #BBD8FF; border-color: #BBD8FF; color: #0B1F3A; }
+    .nav-pills .nav-link.active { background-color: #9CC7FF; color: #0B1F3A; }
+    .nav-link { color: #9CC7FF; }
+}

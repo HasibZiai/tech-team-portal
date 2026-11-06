@@ -1,0 +1,39 @@
+# Publishes the ready-made Docker image when a version tag such as v0.1.0 is pushed.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/hasibziai/tech-team-portal
+
+jobs:
+  image:
+    # Only the public repository publishes an image.
+    if: github.repository == 'HasibZiai/tech-team-portal'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build --tag "$IMAGE:${GITHUB_REF_NAME#v}" --tag "$IMAGE:latest" .
+
+      - name: Check map rendering works in the image
+        run: docker run --rm "$IMAGE:latest" dotnet PcServ.Web.dll --render-selftest
+
+      - name: Check it starts as a brand-new install
+        run: |
+          docker run --detach --name check --publish 127.0.0.1:8080:8080 --cap-drop ALL --security-opt no-new-privileges:true "$IMAGE:latest"
+          for attempt in $(seq 1 30); do curl --fail --silent http://localhost:8080/health && break; sleep 2; done
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/setup
+          docker rm --force check
+
+      - name: Publish
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+          docker push --all-tags "$IMAGE"

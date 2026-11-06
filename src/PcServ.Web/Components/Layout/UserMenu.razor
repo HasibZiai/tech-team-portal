@@ -1,0 +1,24 @@
+@inject IJSRuntime JS
+
+<AuthorizeView>
+    <Authorized Context="auth">
+        @* Signing out needs a real form post. It sits outside the menu because menus may only contain menu items. *@
+        <form id="logout-form" action="Account/Logout" method="post" hidden>
+            <AntiforgeryToken />
+        </form>
+        <MudMenu Label="@auth.User.DisplayName()" Color="Color.Inherit" Variant="Variant.Text"
+                 StartIcon="@Icons.Material.Outlined.AccountCircle" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                 AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" LockScroll="true"
+                 AriaLabel="@($"Account menu for {auth.User.DisplayName()}, {auth.User.PrimaryRole() ?? "no role"}")">
+            <MudMenuItem Href="Account/Manage" Icon="@Icons.Material.Outlined.ManageAccounts">My account</MudMenuItem>
+            <MudMenuItem Href="about" Icon="@Icons.Material.Outlined.Info">About</MudMenuItem>
+            <MudDivider />
+            <MudMenuItem Icon="@Icons.Material.Outlined.Logout" OnClick="SignOut">Sign out</MudMenuItem>
+        </MudMenu>
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private async Task SignOut() =>
+        await JS.InvokeVoidAsync("pcserv.submitForm", "logout-form");
+}

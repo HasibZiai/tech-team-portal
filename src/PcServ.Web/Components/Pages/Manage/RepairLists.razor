@@ -1,0 +1,91 @@
+@page "/manage/repair-lists"
+@inject RepairListService Lists
+@inject ISnackbar Snackbar
+@inject SettingsService AppSettings
+
+<PageTitle>Repair lists · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Repair lists" Subtitle="The Chromebook models and repair reasons people pick from when they check in a device." />
+
+<MudGrid Spacing="3">
+    @foreach (var (kind, title, label) in Sections)
+    {
+        <MudItem xs="12" md="6">
+            <MudPaper Outlined="true" Class="pa-4 h-100">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mb-2">@title</MudText>
+                <div class="d-flex gap-2 align-start mb-3">
+                    <MudTextField T="string" Value="@_new[kind]" ValueChanged="value => _new[kind] = value" Label="@($"New {label}")" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="80" Immediate="true" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-1" aria-label="@($"Add new {label}")" OnClick="() => Add(kind)">Add</MudButton>
+                </div>
+                <ul class="repair-list-edit" aria-label="@title">
+                    @foreach (var item in _items[kind])
+                    {
+                        <li>
+                            <MudTextField T="string" Value="@item.Name" ValueChanged="name => Rename(item, name)" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="80" />
+                            <MudSwitch T="bool" Value="item.IsActive" ValueChanged="active => SetActive(item, active)" Color="Color.Primary" Label="In use" aria-label="@($"{item.Name} in use")" />
+                        </li>
+                    }
+                </ul>
+                <MudText Typo="Typo.body2" Class="mt-2">
+                    Turn off "In use" to take something off the list. Past repairs keep their wording.
+                    @if (kind == RepairListKind.Reason)
+                    {
+                        <span>"Other" is always offered.</span>
+                    }
+                </MudText>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+@code {
+    private static readonly (RepairListKind Kind, string Title, string Label)[] Sections =
+    [
+        (RepairListKind.Model, "Chromebook models", "model"),
+        (RepairListKind.Reason, "Reasons for repair", "reason"),
+    ];
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private readonly Dictionary<RepairListKind, List<RepairListItem>> _items = new() { [RepairListKind.Model] = [], [RepairListKind.Reason] = [] };
+    private readonly Dictionary<RepairListKind, string?> _new = new() { [RepairListKind.Model] = null, [RepairListKind.Reason] = null };
+
+    protected override async Task OnInitializedAsync()
+    {
+        foreach (var kind in _items.Keys) _items[kind] = await Lists.ListAsync(kind);
+    }
+
+    private async Task Save(RepairListItem item)
+    {
+        try
+        {
+            await Lists.SaveAsync(item, (await AuthState).User);
+            Snackbar.Add(await AppSettings.QuipAsync(QuipMoment.Saved), Severity.Success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        _items[item.Kind] = await Lists.ListAsync(item.Kind);
+    }
+
+    private async Task Add(RepairListKind kind)
+    {
+        await Save(new RepairListItem { Kind = kind, Name = _new[kind] ?? "" });
+        _new[kind] = null;
+    }
+
+    private async Task Rename(RepairListItem item, string? name)
+    {
+        var copy = item.Copy<RepairListItem>();
+        copy.Name = name ?? "";
+        await Save(copy);
+    }
+
+    private async Task SetActive(RepairListItem item, bool active)
+    {
+        var copy = item.Copy<RepairListItem>();
+        copy.IsActive = active;
+        await Save(copy);
+    }
+}

@@ -1,0 +1,40 @@
+<MudDialog>
+    <DialogContent>
+        <EditForm id="user-form" Model="_model" OnValidSubmit="() => MudDialog.Close(DialogResult.Ok(_model))">
+            <DataAnnotationsValidator />
+            <MudStack Spacing="3">
+                <MudTextField @bind-Value="_model.DisplayName" For="() => _model.DisplayName" Label="Full name" Placeholder="e.g. Jordan Smith"
+                              Variant="Variant.Outlined" AutoFocus="true" />
+                <MudTextField @bind-Value="_model.UserName" For="() => _model.UserName" Label="Username" Placeholder="e.g. jsmith"
+                              Variant="Variant.Outlined" ReadOnly="!IsNew"
+                              HelperText="@(IsNew ? "Letters, numbers, dots, dashes and underscores. Used to sign in." : "Usernames can't be changed.")" />
+                <MudRadioGroup T="string" @bind-Value="_model.Role">
+                    @foreach (var role in Roles.All)
+                    {
+                        <div class="role-option">
+                            <MudRadio T="string" Value="role" Color="Color.Primary">
+                                <strong>@role</strong>
+                            </MudRadio>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="role-description">@Roles.Describe(role)</MudText>
+                        </div>
+                    }
+                </MudRadioGroup>
+            </MudStack>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="user-form" Variant="Variant.Filled" Color="Color.Primary">@(IsNew ? "Create user" : "Save")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public UserFormModel Model { get; set; } = new();
+
+    private UserFormModel _model = new();
+    private bool IsNew => string.IsNullOrEmpty(_model.Id);
+
+    protected override void OnInitialized() => _model = Model with { };
+}

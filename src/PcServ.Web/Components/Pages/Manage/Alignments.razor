@@ -1,0 +1,133 @@
+@page "/manage/alignments"
+@using PcServ.Web.Services.Maps
+@implements IDisposable
+@inject MapLinkService Links
+@inject ISnackbar Snackbar
+
+<PageTitle>Align layers · Tech Team Portal</PageTitle>
+
+<PageHeader Title="Align layers" Subtitle="Line up the Wi-Fi maps with each school's plans, so network layers show on those plans too." />
+
+<MudPaper Outlined="true" Class="pa-5 mb-4">
+    <MudText Typo="Typo.body1">
+        <strong>@_unaligned</strong> map pair(s) to align · <strong>@Count(MapLinkStatus.Suggested)</strong> to check · <strong>@Count(MapLinkStatus.Confirmed)</strong> confirmed
+    </MudText>
+    <MudText Typo="Typo.body2" Class="mt-1">
+        Nothing appears on a plan until its alignment is confirmed. Finding alignments can take several minutes; stay on this page while it runs.
+    </MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" StartIcon="@Icons.Material.Outlined.AutoFixHigh"
+               Disabled="@(_running || _unaligned == 0)" OnClick="Suggest">
+        @(_running ? "Working..." : $"Find alignments for {_unaligned} pair(s)")
+    </MudButton>
+    @if (_running)
+    {
+        <MudProgressLinear Color="Color.Primary" Value="@Percent" Class="mt-4" aria-label="Alignment progress" />
+        <MudText Typo="Typo.body2" Class="mt-1" role="status">@_done of @_total finished. Last: @_current</MudText>
+    }
+    @if (_result is not null)
+    {
+        <MudAlert Severity="@(_result.Failures.Count == 0 ? Severity.Success : Severity.Warning)" Variant="Variant.Outlined" Class="mt-3">
+            @_result.Suggested alignment(s) ready to check, and @_result.ConfirmedAutomatically confirmed automatically because they're the same drawing.
+            @foreach (var failure in _result.Failures)
+            {
+                <div>@failure</div>
+            }
+        </MudAlert>
+    }
+</MudPaper>
+
+@if (_rows is { Count: > 0 })
+{
+    <MudTable Items="_rows" Dense="true" Hover="true" Outlined="true" Elevation="0" Breakpoint="Breakpoint.Sm" RowsPerPage="50">
+        <HeaderContent>
+            <MudTh>Site</MudTh>
+            <MudTh>Plan</MudTh>
+            <MudTh>Layers from</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Action</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Site">@context.SiteName</MudTd>
+            <MudTd DataLabel="Plan">@context.TargetName</MudTd>
+            <MudTd DataLabel="Layers from">@context.SourceName</MudTd>
+            <MudTd DataLabel="Status">
+                @if (context.Status == MapLinkStatus.Confirmed)
+                {
+                    <span>Confirmed</span>
+                }
+                else
+                {
+                    <strong>To check</strong>
+                }
+            </MudTd>
+            <MudTd DataLabel="Action">
+                <MudButton Href="@($"manage/alignments/{context.Id}")" Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                           aria-label="@($"{(context.Status == MapLinkStatus.Confirmed ? "Review" : "Check")} {context.SiteName} {context.TargetName}")">
+                    @(context.Status == MapLinkStatus.Confirmed ? "Review" : "Check")
+                </MudButton>
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="[50, 100]" />
+        </PagerContent>
+    </MudTable>
+}
+
+@code {
+    private List<MapLinkRow>? _rows;
+    private int _unaligned;
+    private bool _running;
+    private int _done;
+    private int _total;
+    private string _current = "";
+    private SuggestResult? _result;
+    private readonly CancellationTokenSource _cancel = new();
+
+    private double Percent => _total == 0 ? 0 : 100.0 * _done / _total;
+
+    private int Count(MapLinkStatus status) => _rows?.Count(r => r.Status == status) ?? 0;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _rows = await Links.ListAsync();
+        _unaligned = await Links.CountUnalignedAsync();
+    }
+
+    private async Task Suggest()
+    {
+        _running = true;
+        _result = null;
+        _done = 0;
+        _total = _unaligned;
+        var progress = new Progress<(int Done, int Total, string Current)>(p =>
+        {
+            _done = Math.Max(_done, p.Done);
+            _total = p.Total;
+            _current = p.Current;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            _result = await Links.SuggestAsync(progress, _cancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The person left the page. Nothing was saved, so running it again starts over.
+        }
+        finally
+        {
+            _running = false;
+        }
+
+        if (!_cancel.IsCancellationRequested) await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _cancel.Cancel();
+        _cancel.Dispose();
+    }
+}

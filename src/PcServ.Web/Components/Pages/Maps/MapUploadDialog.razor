@@ -1,0 +1,129 @@
+@using PcServ.Web.Services.Maps
+@inject SiteMapService Maps
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudFileUpload T="IBrowserFile" FilesChanged="OnFileChosen" Accept=".pdf,.png,.jpg,.jpeg">
+                <CustomContent>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AttachFile" OnClick="@context.OpenFilePickerAsync">
+                        @(_fileName ?? "Choose a PDF or image")
+                    </MudButton>
+                </CustomContent>
+            </MudFileUpload>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                If a PDF has text boxes on it (a labeled map), they become a room labels layer you can switch on and off.
+            </MudText>
+
+            <MudSelect T="int" Value="_siteId" ValueChanged="SiteChanged" Label="Site" Variant="Variant.Outlined">
+                @foreach (var site in Sites)
+                {
+                    <MudSelectItem T="int" Value="site.Id">@site.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudTextField @bind-Value="_name" Label="Map name" Placeholder="e.g. Site plan" Variant="Variant.Outlined" MaxLength="120" />
+
+            <MudStack Row="true" Spacing="3">
+                <MudSelect T="SiteMapKind" @bind-Value="_kind" Label="Type" Variant="Variant.Outlined" Class="flex-1">
+                    <MudSelectItem T="SiteMapKind" Value="SiteMapKind.SitePlan">Site plan</MudSelectItem>
+                    <MudSelectItem T="SiteMapKind" Value="SiteMapKind.FloorPlan">Floor plan</MudSelectItem>
+                    <MudSelectItem T="SiteMapKind" Value="SiteMapKind.Other">Other</MudSelectItem>
+                </MudSelect>
+                <MudNumericField T="int?" @bind-Value="_floor" Label="Floor (optional)" Variant="Variant.Outlined" Min="1" Max="20" Class="flex-1" />
+            </MudStack>
+
+            <MudSelect T="int?" @bind-Value="_buildingId" Label="Building (optional)" Variant="Variant.Outlined" Clearable="true">
+                @foreach (var building in Sites.FirstOrDefault(s => s.Id == _siteId)?.Buildings ?? [])
+                {
+                    <MudSelectItem T="int?" Value="building.Id">@building.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudSelect T="string" @bind-Value="_role" Label="Who can open this map" Variant="Variant.Outlined"
+                       HelperText="Use Tech and above for maps that show network equipment.">
+                @foreach (var role in Roles.All)
+                {
+                    <MudSelectItem T="string" Value="role">@role and above</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()" Disabled="_saving">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="@(_saving || _file is null || string.IsNullOrWhiteSpace(_name))">
+            @(_saving ? "Adding..." : "Add map")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public List<Site> Sites { get; set; } = [];
+
+    private int _siteId;
+    private int? _buildingId;
+    private string? _name;
+    private SiteMapKind _kind = SiteMapKind.SitePlan;
+    private int? _floor;
+    private string _role = Roles.Viewer;
+    private string? _fileName;
+    private byte[]? _file;
+    private string? _error;
+    private bool _saving;
+
+    protected override void OnInitialized() => _siteId = Sites.FirstOrDefault()?.Id ?? 0;
+
+    private void SiteChanged(int siteId)
+    {
+        _siteId = siteId;
+        _buildingId = null;
+    }
+
+    private async Task OnFileChosen(IBrowserFile? file)
+    {
+        if (file is null) return;
+        _error = null;
+        _file = null;
+        _fileName = file.Name;
+
+        try
+        {
+            await using var stream = file.OpenReadStream(SiteMapService.MaxFileBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            _file = memory.ToArray();
+            if (string.IsNullOrWhiteSpace(_name)) _name = Path.GetFileNameWithoutExtension(file.Name);
+        }
+        catch (IOException)
+        {
+            _fileName = null;
+            _error = "That file couldn't be read. The limit is 50 MB.";
+        }
+    }
+
+    private async Task Save()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            var result = await Maps.CreateFromUploadAsync(new MapUpload(_siteId, _buildingId, _name!, _kind, _floor, _fileName!, _file!, _role));
+            MudDialog.Close(DialogResult.Ok(result));
+        }
+        catch (MapFileException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

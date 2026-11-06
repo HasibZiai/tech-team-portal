@@ -1,0 +1,112 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject SettingsService Settings
+@inject IJSRuntime JS
+
+<MudThemeProvider @ref="_themeProvider" Theme="AppTheme.Theme" @bind-IsDarkMode="_isDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider CloseOnEscapeKey="true" BackdropClick="false" />
+<MudSnackbarProvider />
+
+@* Lets keyboard users jump past the navigation. Uses script because the app's base URL would otherwise send "#main-content" to the home page. *@
+<a href="#main-content" class="skip-link" onclick="document.getElementById('main-content').focus(); return false;">Skip to main content</a>
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="false">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="() => _drawerOpen = !_drawerOpen" aria-label="Toggle navigation menu" />
+        <a href="" class="brand">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-text">Tech Team Portal</span>
+        </a>
+        <MudSpacer />
+        <MudTooltip Text="@(_isDarkMode ? "Switch to light mode" : "Switch to dark mode")">
+            <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Outlined.LightMode : Icons.Material.Outlined.DarkMode)"
+                           Color="Color.Inherit" OnClick="ToggleDarkMode" aria-label="Toggle dark mode" />
+        </MudTooltip>
+        <UserMenu />
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Variant="DrawerVariant.Responsive" Class="app-drawer" aria-label="Navigation">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent>
+        <TestVersionBanner />
+        <main id="main-content" tabindex="-1">
+            <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6 page-container">
+                @Body
+            </MudContainer>
+        </main>
+        <footer class="app-footer">
+            <span>@_footer</span>
+            <span class="sep">·</span>
+            <a href="about">About</a>
+        </footer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Something went wrong. That wasn't part of the test.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private const string DarkModeStorageKey = "pcserv-dark-mode";
+
+    private MudThemeProvider? _themeProvider;
+    private bool _isDarkMode;
+    private bool _drawerOpen = true;
+    private string _footer = Quips.PlainFor(QuipMoment.Footer);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Settings.Changed += OnSettingsChanged;
+        _footer = await Settings.QuipAsync(QuipMoment.Footer);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _themeProvider is not null)
+        {
+            // Use this browser's saved choice; otherwise follow the Windows light/dark setting.
+            var saved = await ReadSavedDarkModeAsync();
+            _isDarkMode = saved ?? await _themeProvider.GetSystemDarkModeAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleDarkMode()
+    {
+        _isDarkMode = !_isDarkMode;
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", DarkModeStorageKey, _isDarkMode ? "true" : "false");
+        }
+        catch (JSException)
+        {
+            // Browser storage can be blocked. The toggle still works until the next refresh.
+        }
+    }
+
+    private async Task<bool?> ReadSavedDarkModeAsync()
+    {
+        try
+        {
+            return bool.TryParse(await JS.InvokeAsync<string?>("localStorage.getItem", DarkModeStorageKey), out var value) ? value : null;
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
+    private void OnSettingsChanged() => _ = InvokeAsync(async () =>
+    {
+        _footer = await Settings.QuipAsync(QuipMoment.Footer);
+        StateHasChanged();
+    });
+
+    public void Dispose() => Settings.Changed -= OnSettingsChanged;
+}
