@@ -31,6 +31,8 @@ jobs:
           docker run --detach --name check --publish 127.0.0.1:8080:8080 --cap-drop ALL --security-opt no-new-privileges:true "$IMAGE:latest"
           for attempt in $(seq 1 30); do curl --fail --silent http://localhost:8080/health && break; sleep 2; done
           curl --fail --silent --show-error --output /dev/null http://localhost:8080/setup
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/_framework/blazor.web.js
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/_content/MudBlazor/MudBlazor.min.js
           docker rm --force check
 
       - name: Publish

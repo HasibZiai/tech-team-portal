@@ -33,13 +33,19 @@ Camera scanning of asset tags is experimental, so check each tag after scanning.
 With [Docker](https://docs.docker.com/get-docker/) installed:
 
 ```bash
-docker run -d --name tech-team-portal -p 127.0.0.1:8080:8080 \
+docker run -d --name tech-team-portal --restart unless-stopped -p 127.0.0.1:8080:8080 \
   -v tech-team-portal-data:/app/data ghcr.io/hasibziai/tech-team-portal:latest
 ```
 
 Open http://localhost:8080 and create the first Admin account. To look around with made-up data, turn on **Manage → Settings → Show test version**.
 
-This only accepts connections from your own computer, because it has no HTTPS on its own. To delete the trial and its data:
+This only accepts connections from the same computer, because it has no HTTPS on its own. If you're running it on a server without a browser, connect from your PC with an SSH tunnel, then open the same address there:
+
+```bash
+ssh -L 8080:localhost:8080 username@server-address
+```
+
+To delete the trial and its data:
 
 ```bash
 docker rm -f tech-team-portal && docker volume rm tech-team-portal-data

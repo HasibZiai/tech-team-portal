@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>aspnet-PcServ_Web-d720d9f4-5434-4abe-b9f3-22e2be651b54</UserSecretsId>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <!-- Includes blazor.web.js, which makes pages interactive. The SDK otherwise detects this from the pages it finds at restore, and the Dockerfile restores before copying them. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <ItemGroup>

@@ -41,6 +41,11 @@ jobs:
           [ "$location" = "http://localhost:8080/setup" ]
           curl --fail --silent --show-error --output /dev/null http://localhost:8080/setup
 
+      - name: Check the scripts that make pages interactive are served
+        run: |
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/_framework/blazor.web.js
+          curl --fail --silent --show-error --output /dev/null http://localhost:8080/_content/MudBlazor/MudBlazor.min.js
+
       - name: Check map rendering works inside the container
         run: docker compose exec web dotnet PcServ.Web.dll --render-selftest
 

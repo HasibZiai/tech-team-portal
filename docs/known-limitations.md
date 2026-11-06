@@ -130,6 +130,6 @@ Last updated 2026-11-06.
 - A downloaded list in a real asset system's bulk update, including whether a batch can change a device's status.
 - The organization settings set through `deploy/.env` in Docker. They were tested using `district.json`.
 - The production Docker setup on a real VM, including a clean install from the published image.
-- The published image and its release workflow, and the Docker security options (`no-new-privileges`, dropped capabilities) outside CI.
+- The Docker image in a real browser: CI checks that its scripts are served, but not that buttons respond. Version 0.1.0 was missing a required script for this reason, which a VM test found.
 - The recovery commands inside Docker. They were tested on a running copy of the app, not through `docker compose exec`.
 - A real screen reader (NVDA or Narrator).
